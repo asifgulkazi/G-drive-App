@@ -1,4 +1,4 @@
-# Version: 10.0.4 - FINAL, STABLE APPROVAL FLOW
+# Version: 11.0.0 - GOOGLE APPS SCRIPT INTEGRATION
 import os
 import re
 import io
@@ -44,22 +44,13 @@ for key, default_value in SESSION_DEFAULTS.items():
 
 # --- AUTHENTICATION & AUTHORIZATION LOGIC ---
 
-def get_gspread_client(read_only=True):
-    """Initializes and returns a gspread client."""
-    if read_only:
-        scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-    else:
-        scopes = ['https://www.googleapis.com/auth/spreadsheets']
-    
-    creds_dict = st.secrets["gspread_service_account"]
-    creds = ServiceAccountCredentials.from_service_account_info(creds_dict, scopes=scopes)
-    client = gspread.authorize(creds)
-    return client
-
 @st.cache_data(ttl=60)
 def get_authorized_users():
     try:
-        client = get_gspread_client(read_only=True)
+        scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly']
+        creds_dict = st.secrets["gspread_service_account"]
+        creds = ServiceAccountCredentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
         sheet = client.open_by_url(AUTHORIZED_USERS_SHEET_URL).sheet1
         user_emails = sheet.col_values(1)
         return {email.lower().strip() for email in user_emails if email}
@@ -67,66 +58,36 @@ def get_authorized_users():
         st.error(f"FATAL: Could not read authorized users list. Error: {e}")
         return None
 
-def grant_access_to_user(email_to_add):
-    """Appends a new user's email to the authorization sheet."""
-    try:
-        client = get_gspread_client(read_only=False)
-        sheet = client.open_by_url(AUTHORIZED_USERS_SHEET_URL).sheet1
-        existing_users = {email.lower().strip() for email in sheet.col_values(1) if email}
-        if email_to_add.lower().strip() not in existing_users:
-            sheet.append_row([email_to_add])
-            get_authorized_users.clear()
-            return True, f"Access granted to {email_to_add}."
-        else:
-            return True, f"{email_to_add} already has access."
-    except Exception as e:
-        st.error(f"Failed to grant access automatically: {e}")
-        return False, "Could not grant access."
-
-
 def handle_user_login():
     if 'google_creds' in st.session_state and st.session_state.google_creds:
         try:
             creds_info = json.loads(st.session_state.google_creds)
             creds = Credentials.from_authorized_user_info(creds_info)
         except (json.JSONDecodeError, TypeError):
-            st.session_state.google_creds = None
-            return None
-
+            st.session_state.google_creds = None; return None
         if creds.expired and creds.refresh_token:
             try:
                 creds.refresh(GoogleAuthRequest())
                 st.session_state.google_creds = creds.to_json()
             except Exception as e:
                 st.error(f"Session expired. Please log in again. Error: {e}")
-                st.session_state.google_creds = None
-                return None
-        
+                st.session_state.google_creds = None; return None
         if creds.valid:
             return build('drive', 'v3', credentials=creds)
-
     try:
         client_config = {"web": st.secrets["google_creds"]["web"]}
         scopes = ['https://www.googleapis.com/auth/drive']
-        flow = Flow.from_client_config(
-            client_config, 
-            scopes=scopes, 
-            redirect_uri=client_config["web"]["redirect_uris"][0]
-        )
+        flow = Flow.from_client_config(client_config, scopes=scopes, redirect_uri=client_config["web"]["redirect_uris"][0])
     except KeyError:
-        st.error("FATAL: OAuth credentials (`google_creds`) are missing or malformed in secrets.")
-        return None
-
+        st.error("FATAL: OAuth credentials (`google_creds`) are missing or malformed in secrets."); return None
     auth_code = st.query_params.get('code')
     if auth_code:
         try:
             flow.fetch_token(code=auth_code)
             st.session_state.google_creds = flow.credentials.to_json()
-            st.query_params.clear()
-            st.rerun()
+            st.query_params.clear(); st.rerun()
         except Exception as e:
-            st.error(f"Authentication failed: {e}")
-            return None
+            st.error(f"Authentication failed: {e}"); return None
     else:
         auth_url, _ = flow.authorization_url(prompt='consent')
         st.title(f"Welcome to {APP_NAME}")
@@ -135,67 +96,47 @@ def handle_user_login():
         return None
 
 def send_authorization_request_email(user_email, developer_email, app_email, app_password):
+    # NEW: Simplified email body for the Apps Script to parse.
+    msg = EmailMessage()
+    msg.set_content(f"""
+    Hello Developer,
+    A new user has requested access to the {APP_NAME}.
+    User's Email: {user_email}
+    This is an automated notification. The Google Apps Script will process this request shortly.
+    """)
+    msg['Subject'] = f"Access Request for Cloud Drive Manager" # This subject MUST match the one in the Apps Script.
+    msg['From'] = app_email
+    msg['To'] = developer_email
     try:
-        app_url = st.secrets["google_creds"]["web"]["redirect_uris"][0]
-        approval_link = f"{app_url}?action=approve&email={user_email}"
-
-        html_content = f"""
-        <html>
-        <body style="font-family: sans-serif; text-align: center; padding: 40px;">
-            <div style="max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px; padding: 20px;">
-                <h2>Access Request for {APP_NAME}</h2>
-                <p>A new user has requested access to the application.</p>
-                <p style="font-size: 1.2em; margin: 20px 0;"><b>User's Email:</b> {user_email}</p>
-                <p>To grant access, click the button below. You must be logged into the app as an authorized user in the same browser.</p>
-                <a href="{approval_link}" style="background-color: #28a745; color: white; padding: 14px 25px; text-align: center; text-decoration: none; display: inline-block; border-radius: 8px; font-size: 16px; margin-top: 20px;">
-                    Grant Access
-                </a>
-                <p style="font-size: 0.8em; color: #777; margin-top: 30px;">If the button does not work, you can copy and paste this link into your browser:<br><a href="{approval_link}">{approval_link}</a></p>
-            </div>
-        </body>
-        </html>
-        """
-        msg = EmailMessage()
-        msg['Subject'] = f"Access Request for {APP_NAME} from {user_email}"
-        msg['From'] = app_email
-        msg['To'] = developer_email
-        msg.set_content(f"User {user_email} has requested access. Please open this email in an HTML-compatible viewer to approve.")
-        msg.add_alternative(html_content, subtype='html')
-        
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
             server.login(app_email, app_password)
             server.send_message(msg)
         return True
     except Exception as e:
-        st.error(f"Could not send request email. Error: {e}")
-        return False
+        st.error(f"Could not send request email. Error: {e}"); return False
 
 def show_access_denied_page(user_email):
     st.title("🔒 Access Denied")
     st.error(f"The account **{user_email}** is not authorized.")
     if st.session_state.authorization_request_sent:
-        st.success("Your request has been sent to the administrator.")
+        st.success("Your request has been sent to the administrator. Access is typically granted within 5-10 minutes.")
     else:
         if st.button("Request Authorization", type="primary"):
             creds = st.secrets.get("email_credentials", {})
             if send_authorization_request_email(user_email, creds.get("developer_email"), creds.get("app_email"), creds.get("app_password")):
                 st.session_state.authorization_request_sent = True
                 st.rerun()
-    
     if st.button("Logout and try a different account"):
         for key in list(st.session_state.keys()):
             if key != 'page': del st.session_state[key]
-        st.query_params.clear()
-        st.rerun()
+        st.query_params.clear(); st.rerun()
 
 def get_drive_storage_info(_service):
     try:
         about = _service.about().get(fields='storageQuota,user').execute()
-        storage = about.get('storageQuota', {})
-        user = about.get('user', {})
-        limit = int(storage.get('limit', 1)) 
-        usage = int(storage.get('usage', 0))
+        storage = about.get('storageQuota', {}); user = about.get('user', {})
+        limit = int(storage.get('limit', 1)); usage = int(storage.get('usage', 0))
         return {
             'user_name': user.get('displayName', 'N/A'),
             'user_email': user.get('emailAddress', 'N/A'),
@@ -205,7 +146,7 @@ def get_drive_storage_info(_service):
         }
     except Exception: return None
 
-# --- HELPER & FEATURE FUNCTIONS ---
+# --- HELPER & FEATURE FUNCTIONS (UNCHANGED) ---
 def extract_file_id_from_link(link):
     if not link: return None
     patterns = [r'/file/d/([a-zA-Z0-9_-]+)', r'/drive/folders/([a-zA-Z0-9_-]+)', r'id=([a-zA-Z0-9_-]+)', r'/d/([a-zA-Z0-9_-]+)/']
@@ -664,15 +605,12 @@ if service:
     if user_info:
         authorized_users = get_authorized_users()
         if authorized_users is not None:
-            # First, check if the current user is authorized.
             is_authorized = user_info['user_email'].lower().strip() in authorized_users
             
-            # Next, check for an approval action in the URL.
             query_params = st.query_params
             action = query_params.get("action", [None])[0]
             email_to_add = query_params.get("email", [None])[0]
 
-            # The approval action can only be performed by an already authorized user.
             if is_authorized and action == "approve" and email_to_add:
                 st.query_params.clear()
                 st.title("User Approval")
@@ -684,10 +622,8 @@ if service:
                     st.error(f"❌ {message}")
                 if st.button("⬅️ Back to Dashboard"):
                     st.rerun()
-            # If the user is authorized and there's no approval action, run the main app.
             elif is_authorized:
                 run_main_app(service, user_info)
-            # Otherwise, the user is not authorized.
             else:
                 show_access_denied_page(user_info['user_email'])
     else:
