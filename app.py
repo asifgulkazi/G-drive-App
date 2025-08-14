@@ -1,4 +1,4 @@
-# Version: 6.2.2 - FINAL, CLEANED
+# Version: 6.2.3 - FINAL, STABILITY FIXES
 import os
 import re
 import io
@@ -17,12 +17,13 @@ from googleapiclient.errors import HttpError
 from google.oauth2.credentials import Credentials
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 
-# --- Configuration ---
-# Your specific Google Sheet for managing user access.
+# --- CONFIGURATION & INITIALIZATION ---
+# This MUST be the first Streamlit command in your script.
+st.set_page_config(page_title="Cloud Drive Manager", page_icon="☁️", layout="wide")
+
 AUTHORIZED_USERS_SHEET_URL = "https://docs.google.com/spreadsheets/d/1Z_SANZWikklPWXntLojdMgwXJs45FDFPKxr4gRBNqco/edit?gid=0#gid=0"
 APP_NAME = "Cloud Drive Manager"
 
-# --- Session State Initialization ---
 SESSION_DEFAULTS = {
     'google_creds': None, 'drive_service': None, 'page': "Dashboard", 'user_info': None,
     'authorization_request_sent': False,
@@ -42,7 +43,7 @@ for key, default_value in SESSION_DEFAULTS.items():
 
 # --- AUTHENTICATION & ACCESS REQUEST WORKFLOW ---
 
-@st.cache_data(ttl=600)
+# FIX: Removed @st.cache_data decorator to prevent CacheReplayClosureError.
 def get_authorized_users():
     """Reads the list of authorized emails from the Google Sheet."""
     try:
@@ -354,7 +355,7 @@ def reset_cleaner_state():
 
 def run_main_app(service):
     """Contains the entire Cloud Drive Manager application UI."""
-    st.set_page_config(page_title=APP_NAME, page_icon="☁️", layout="wide")
+    # FIX: st.set_page_config is now at the top of the script and is not called here.
     
     with st.sidebar:
         st.title(f"☁️ {APP_NAME}")
@@ -635,8 +636,6 @@ def run_main_app(service):
             st.button("Start New Task", on_click=reset_cleaner_state)
 
 # --- FINAL APP ENTRY POINT ---
-st.set_page_config(page_title=APP_NAME, layout="centered")
-
 # This single function call handles everything: login, redirects, authorization, and the access request workflow.
 service = get_authenticated_service()
 
@@ -644,6 +643,3 @@ if service:
     # If the service object is returned, the user is fully authenticated and authorized.
     # We can now run the main application with its full wide layout.
     run_main_app(service)
-
-# If 'service' is None, the get_authenticated_service() function has already displayed the necessary UI
-# (e.g., the "Login with Google" button or the "Access Denied" page). No further action is needed here.
