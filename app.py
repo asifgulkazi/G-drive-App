@@ -1,8 +1,9 @@
-# Version: 8.0.0 - FINAL, COMPLETE & STABLE
+# Version: 9.0.0 - PERFORMANCE & TIMERS
 import os
 import re
 import io
 import json
+import time
 import pandas as pd
 import streamlit as st
 import ast
@@ -173,7 +174,7 @@ def format_storage(size_in_gb):
 def get_file_icon(item):
     if item.get('is_folder_sort') == 1 or item.get('mimeType') == 'application/vnd.google-apps.folder': return "📁"
     mime_type = item.get('effective_mime', item.get('mimeType', '')); icon_map = {'application/pdf': '📕','application/vnd.google-apps.document': '📝','application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📝','application/vnd.google-apps.spreadsheet': '📊','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '📊','application/vnd.google-apps.presentation': '📽️','application/vnd.openxmlformats-officedocument.presentationml.presentation': '📽️','application/zip': '📦','application/x-zip-compressed': '📦'}
-    if mime_type.startswith('image/'): return '🖼️'
+    if mime_type.startswith('image/'): return '�️'
     if mime_type.startswith('audio/'): return '🎵'
     if mime_type.startswith('video/'): return '🎞️'
     return icon_map.get(mime_type, '📄')
@@ -183,6 +184,7 @@ def get_drive_statistics(_service, user_email):
     stats = {'total_files': 0, 'total_folders': 0, 'owned_by_me_files': 0, 'owned_by_me_folders': 0, 'shared_with_me_files': 0, 'shared_with_me_folders': 0, 'total_size_owned_bytes': 0}; all_files, page_token = [], None
     while True:
         try:
+            # PERFORMANCE: Increased pageSize to maximum
             results = _service.files().list(q="trashed=false", fields="nextPageToken, files(id, name, mimeType, size, owners, modifiedTime, webViewLink)", pageSize=1000, supportsAllDrives=True, includeItemsFromAllDrives=True, pageToken=page_token).execute(); files = results.get('files', []); all_files.extend(files)
             for item in files:
                 is_folder = item.get('mimeType') == 'application/vnd.google-apps.folder'; is_owned_by_me = item.get('owners', [{}])[0].get('emailAddress', '') == user_email
@@ -209,7 +211,9 @@ def list_folder_contents(service, folder_id):
     def recurse(s, f_id, path_prefix):
         nonlocal total_size; page_token = None
         while True:
-            try: results = s.files().list(q=f"'{f_id}' in parents and trashed=false", fields="nextPageToken, files(id, name, mimeType, size, webViewLink, capabilities, owners, modifiedTime)", supportsAllDrives=True, includeItemsFromAllDrives=True, pageSize=100, pageToken=page_token).execute()
+            try: 
+                # PERFORMANCE: Increased pageSize
+                results = s.files().list(q=f"'{f_id}' in parents and trashed=false", fields="nextPageToken, files(id, name, mimeType, size, webViewLink, capabilities, owners, modifiedTime)", supportsAllDrives=True, includeItemsFromAllDrives=True, pageSize=1000, pageToken=page_token).execute()
             except HttpError as e: st.warning(f"Could not access folder: {e}"); break
             for item in results.get('files', []):
                 path = os.path.join(path_prefix, item['name']); size = int(item.get('size', 0)); total_size += size; all_items.append({**item, 'Path': path})
@@ -226,7 +230,8 @@ def get_owner_and_all_items_recursive(_service, file_id):
         page_token = None
         while True:
             try:
-                fields_to_get = "nextPageToken, files(id, name, mimeType, webViewLink, capabilities, owners, modifiedTime, size)"; results = _service.files().list(q=f"'{f_id}' in parents and trashed=false", fields=fields_to_get, supportsAllDrives=True, includeItemsFromAllDrives=True, pageSize=200, pageToken=page_token).execute()
+                # PERFORMANCE: Increased pageSize
+                fields_to_get = "nextPageToken, files(id, name, mimeType, webViewLink, capabilities, owners, modifiedTime, size)"; results = _service.files().list(q=f"'{f_id}' in parents and trashed=false", fields=fields_to_get, supportsAllDrives=True, includeItemsFromAllDrives=True, pageSize=1000, pageToken=page_token).execute()
                 for item in results.get('files', []):
                     current_path = path_list + [item['name']]; item['path'] = os.path.join(*current_path); all_items.append(item)
                     if item['mimeType'] == 'application/vnd.google-apps.folder': recurse(item['id'], current_path)
@@ -240,7 +245,8 @@ def get_user_folders(_service):
     folders = []; page_token = None
     while True:
         try:
-            results = _service.files().list(q="mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false", fields="nextPageToken, files(id, name)", pageSize=200, pageToken=page_token).execute()
+            # PERFORMANCE: Increased pageSize
+            results = _service.files().list(q="mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false", fields="nextPageToken, files(id, name)", pageSize=1000, pageToken=page_token).execute()
             folders.extend(results.get('files', [])); page_token = results.get('nextPageToken')
             if not page_token: break
         except Exception as e: st.error(f"Failed to fetch your folders: {e}"); break
@@ -251,7 +257,8 @@ def get_and_sort_folder_items(_service, folder_id, current_user_email):
     items, page_token = [], None
     while True:
         try:
-            fields = "nextPageToken, files(id, name, mimeType, size, webViewLink, modifiedTime, owners, shortcutDetails, capabilities)"; results = _service.files().list(q=f"'{folder_id}' in parents and trashed=false", fields=fields, pageSize=500, pageToken=page_token, supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+            # PERFORMANCE: Increased pageSize
+            fields = "nextPageToken, files(id, name, mimeType, size, webViewLink, modifiedTime, owners, shortcutDetails, capabilities)"; results = _service.files().list(q=f"'{folder_id}' in parents and trashed=false", fields=fields, pageSize=1000, pageToken=page_token, supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
             items.extend(results.get('files', [])); page_token = results.get('nextPageToken')
             if not page_token: break
         except Exception as e: st.error(f"Failed to fetch Drive items: {e}"); break
@@ -352,13 +359,21 @@ def run_main_app(service, user_info):
             
             st.markdown("---")
             if not st.session_state.stats_loaded:
-                if st.button("📊 Get Drive Statistics"): st.session_state.stats_loaded = True; st.rerun()
+                if st.button("📊 Get Drive Statistics"): 
+                    start_time = time.time()
+                    with st.spinner("Fetching drive statistics... This may take a while."):
+                        st.session_state.drive_stats = get_drive_statistics(service, storage['user_email'])
+                    end_time = time.time()
+                    st.toast(f"📊 Statistics loaded in {end_time - start_time:.2f} seconds!", icon="✅")
+                    st.session_state.stats_loaded = True
+                    st.rerun()
                 st.caption("This may take some time to load for large drives.")
             else:
                 if st.button("🔄 Refresh Statistics"):
+                    st.session_state.stats_loaded = False
                     st.rerun()
-                with st.spinner("Fetching drive statistics..."):
-                    drive_stats = get_drive_statistics(service, storage['user_email'])
+                
+                drive_stats = st.session_state.get('drive_stats')
                 if drive_stats:
                     with st.expander("🔍 Drive Content Analysis", expanded=True):
                         c1, c2 = st.columns(2)
@@ -476,6 +491,7 @@ def run_main_app(service, user_info):
                     st.session_state.edited_df = st.data_editor(df, column_order=visible_columns, column_config=column_config, use_container_width=True, hide_index=True, key="cc_data_editor")
                 st.markdown("---"); st.subheader("Copy Destination"); user_folders = get_user_folders(service); folder_names, folder_ids = ["My Drive (Root)"] + [f['name'] for f in user_folders], ["root"] + [f['id'] for f in user_folders]; selected_folder_name, new_folder_name = st.selectbox("Select Destination Folder", options=folder_names), st.text_input("New Folder Name (Optional, creates a sub-folder)")
                 if st.button("🚀 Start Copy Process"):
+                    start_time = time.time()
                     edited_data = st.session_state.edited_df
                     if not edited_data.Select.any(): selected_files = edited_data
                     else: selected_files = edited_data[edited_data.Select]
@@ -495,7 +511,10 @@ def run_main_app(service, user_info):
                                 copied_file = service.files().copy(fileId=row.id, body=file_meta, supportsAllDrives=True, fields='id, name, webViewLink, size, mimeType').execute()
                                 copied_files_list.append({'Name': copied_file['name'], 'Type': row.Type, 'Size (MB)': float(f"{int(copied_file.get('size', 0)) / (1024*1024):.2f}") if copied_file.get('size') else row._asdict().get('Size (MB)'),'Modified': row.Modified, 'Owner': storage['user_name'], 'Link': copied_file.get('webViewLink', '#'), 'Path': os.path.join(final_dest_name, copied_file['name'])})
                             except HttpError as e: skipped_files_list.append({'Name': row.Name, 'Reason': f"Error: {e.reason}"}); continue
-                        st.session_state.copied_files_df = pd.DataFrame(copied_files_list) if copied_files_list else pd.DataFrame(); st.session_state.skipped_files_df = pd.DataFrame(skipped_files_list) if skipped_files_list else pd.DataFrame(); st.toast("✅ Copy process completed!", icon="🎉")
+                        st.session_state.copied_files_df = pd.DataFrame(copied_files_list) if copied_files_list else pd.DataFrame(); st.session_state.skipped_files_df = pd.DataFrame(skipped_files_list) if skipped_files_list else pd.DataFrame()
+                        end_time = time.time()
+                        st.toast(f"✅ Copy process completed in {end_time - start_time:.2f} seconds!", icon="🎉")
+
             if (st.session_state.copied_files_df is not None and not st.session_state.copied_files_df.empty) or (st.session_state.skipped_files_df is not None and not st.session_state.skipped_files_df.empty):
                 st.markdown("---"); st.subheader("Process Results"); visible_columns = ['Name', 'Type', 'Size (MB)', 'Modified', 'Owner', 'Link', 'Path']; column_config = { "Link": st.column_config.LinkColumn("File Link", display_text="LINK"), "Size (MB)": st.column_config.NumberColumn(format="%.2f MB"), "Path": st.column_config.TextColumn("Destination Path") }
                 if st.session_state.copied_files_df is not None and not st.session_state.copied_files_df.empty: st.write("#### ✅ Copied Files"); df_results = st.session_state.copied_files_df; display_cols = [col for col in visible_columns if col in df_results.columns]; st.dataframe(df_results, column_order=display_cols, column_config=column_config, hide_index=True, use_container_width=True)
@@ -506,10 +525,15 @@ def run_main_app(service, user_info):
             st.header("🧹 Bulk File Cleaner"); st.info("Paste a Google Drive file/folder link to analyze and clean its content.")
             st.text_input("Google Drive Link", key="cleaner_link")
             if st.button("Fetch & Analyze", key="cleaner_fetch"):
+                start_time = time.time()
                 file_id = extract_file_id_from_link(st.session_state.cleaner_link)
                 if file_id:
-                    root, items = get_owner_and_all_items_recursive(service, file_id)
-                    if root: st.session_state.cleaner_root_details = root; st.session_state.cleaner_all_items = items; st.session_state.cleaner_state = 'analyzed'; st.session_state.cleaner_success_log = None; st.session_state.cleaner_skipped_log = None
+                    with st.spinner("Analyzing folder contents..."):
+                        root, items = get_owner_and_all_items_recursive(service, file_id)
+                    if root: 
+                        end_time = time.time()
+                        st.toast(f"Analysis complete in {end_time - start_time:.2f} seconds!", icon="🔬")
+                        st.session_state.cleaner_root_details = root; st.session_state.cleaner_all_items = items; st.session_state.cleaner_state = 'analyzed'; st.session_state.cleaner_success_log = None; st.session_state.cleaner_skipped_log = None
                     else: st.error("Could not fetch details. Check the link and permissions.")
                 else: st.error("Invalid Google Drive link provided.")
             if st.session_state.cleaner_state in ['analyzed', 'finished']:
@@ -541,6 +565,7 @@ def run_main_app(service, user_info):
                     with dest_col2: new_folder_name = st.text_input("New Folder Name (Optional)", disabled=can_edit_directly, help="If blank, the original folder name will be used.")
                     button_text = "🚀 Start Cleaning Process" if can_edit_directly else "🚀 Start Copying and Cleaning Process"; submitted = st.form_submit_button(button_text, type="primary")
                     if submitted and not edited_df.empty:
+                        start_time = time.time()
                         if not edited_df.Select.any(): actions_to_perform = edited_df
                         else: actions_to_perform = edited_df[edited_df['Select']]
                         log_entries = []; final_dest_id = dest_folder_id; new_root_folder_name = ""
@@ -570,6 +595,8 @@ def run_main_app(service, user_info):
                                 log_entries.append(log_entry)
                         if log_entries: df_log = pd.DataFrame(log_entries); st.session_state.cleaner_success_log = df_log[df_log['Status'].isin(['Renamed', 'Deleted', 'Copied to Drive'])]; st.session_state.cleaner_skipped_log = df_log[~df_log['Status'].isin(['Renamed', 'Deleted', 'Copied to Drive'])]
                         else: st.session_state.cleaner_success_log = pd.DataFrame(); st.session_state.cleaner_skipped_log = pd.DataFrame()
+                        end_time = time.time()
+                        st.toast(f"✅ Cleaning process completed in {end_time - start_time:.2f} seconds!", icon="🎉")
                         st.session_state.cleaner_state = 'finished'; st.rerun()
             if st.session_state.cleaner_state == 'finished':
                 st.subheader("✅ Process Complete")
@@ -600,3 +627,4 @@ if service:
                 show_access_denied_page(user_info['user_email'])
     else:
         st.error("Could not retrieve user information from Google. Please try logging in again.")
+�
