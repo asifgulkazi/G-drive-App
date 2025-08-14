@@ -1,4 +1,4 @@
-# Version: 9.0.0 - PERFORMANCE & TIMERS
+# Version: 9.0.1 - CLEANED
 import os
 import re
 import io
@@ -174,7 +174,7 @@ def format_storage(size_in_gb):
 def get_file_icon(item):
     if item.get('is_folder_sort') == 1 or item.get('mimeType') == 'application/vnd.google-apps.folder': return "📁"
     mime_type = item.get('effective_mime', item.get('mimeType', '')); icon_map = {'application/pdf': '📕','application/vnd.google-apps.document': '📝','application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📝','application/vnd.google-apps.spreadsheet': '📊','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '📊','application/vnd.google-apps.presentation': '📽️','application/vnd.openxmlformats-officedocument.presentationml.presentation': '📽️','application/zip': '📦','application/x-zip-compressed': '📦'}
-    if mime_type.startswith('image/'): return '�️'
+    if mime_type.startswith('image/'): return '🖼️'
     if mime_type.startswith('audio/'): return '🎵'
     if mime_type.startswith('video/'): return '🎞️'
     return icon_map.get(mime_type, '📄')
@@ -184,7 +184,6 @@ def get_drive_statistics(_service, user_email):
     stats = {'total_files': 0, 'total_folders': 0, 'owned_by_me_files': 0, 'owned_by_me_folders': 0, 'shared_with_me_files': 0, 'shared_with_me_folders': 0, 'total_size_owned_bytes': 0}; all_files, page_token = [], None
     while True:
         try:
-            # PERFORMANCE: Increased pageSize to maximum
             results = _service.files().list(q="trashed=false", fields="nextPageToken, files(id, name, mimeType, size, owners, modifiedTime, webViewLink)", pageSize=1000, supportsAllDrives=True, includeItemsFromAllDrives=True, pageToken=page_token).execute(); files = results.get('files', []); all_files.extend(files)
             for item in files:
                 is_folder = item.get('mimeType') == 'application/vnd.google-apps.folder'; is_owned_by_me = item.get('owners', [{}])[0].get('emailAddress', '') == user_email
@@ -212,7 +211,6 @@ def list_folder_contents(service, folder_id):
         nonlocal total_size; page_token = None
         while True:
             try: 
-                # PERFORMANCE: Increased pageSize
                 results = s.files().list(q=f"'{f_id}' in parents and trashed=false", fields="nextPageToken, files(id, name, mimeType, size, webViewLink, capabilities, owners, modifiedTime)", supportsAllDrives=True, includeItemsFromAllDrives=True, pageSize=1000, pageToken=page_token).execute()
             except HttpError as e: st.warning(f"Could not access folder: {e}"); break
             for item in results.get('files', []):
@@ -230,7 +228,6 @@ def get_owner_and_all_items_recursive(_service, file_id):
         page_token = None
         while True:
             try:
-                # PERFORMANCE: Increased pageSize
                 fields_to_get = "nextPageToken, files(id, name, mimeType, webViewLink, capabilities, owners, modifiedTime, size)"; results = _service.files().list(q=f"'{f_id}' in parents and trashed=false", fields=fields_to_get, supportsAllDrives=True, includeItemsFromAllDrives=True, pageSize=1000, pageToken=page_token).execute()
                 for item in results.get('files', []):
                     current_path = path_list + [item['name']]; item['path'] = os.path.join(*current_path); all_items.append(item)
@@ -245,7 +242,6 @@ def get_user_folders(_service):
     folders = []; page_token = None
     while True:
         try:
-            # PERFORMANCE: Increased pageSize
             results = _service.files().list(q="mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false", fields="nextPageToken, files(id, name)", pageSize=1000, pageToken=page_token).execute()
             folders.extend(results.get('files', [])); page_token = results.get('nextPageToken')
             if not page_token: break
@@ -257,7 +253,6 @@ def get_and_sort_folder_items(_service, folder_id, current_user_email):
     items, page_token = [], None
     while True:
         try:
-            # PERFORMANCE: Increased pageSize
             fields = "nextPageToken, files(id, name, mimeType, size, webViewLink, modifiedTime, owners, shortcutDetails, capabilities)"; results = _service.files().list(q=f"'{folder_id}' in parents and trashed=false", fields=fields, pageSize=1000, pageToken=page_token, supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
             items.extend(results.get('files', [])); page_token = results.get('nextPageToken')
             if not page_token: break
@@ -439,7 +434,7 @@ def run_main_app(service, user_info):
                                             except HttpError as e: st.error(f"Rename failed: {e}")
                                             st.session_state.item_to_rename = None; st.rerun()
                                         if form_cols[1].form_submit_button("❌", use_container_width=True): st.session_state.item_to_rename = None; st.rerun()
-                                else: prefix = "🤝 " if not item.get('is_owned_by_me', True) else ""; st.write(f"{prefix}{get_file_icon(item)} {item['name']}")
+                                else: prefix = "� " if not item.get('is_owned_by_me', True) else ""; st.write(f"{prefix}{get_file_icon(item)} {item['name']}")
                             row_cols[2].write("Folder" if is_folder else "File"); row_cols[3].write(f"{int(item.get('size', 0)) / (1024*1024):.2f} MB" if not is_folder and item.get('size') else ""); row_cols[4].write(pd.to_datetime(item['modifiedTime']).strftime('%y-%m-%d %H:%M')); row_cols[5].write(item.get('effective_owner_name', 'N/A'))
                             with row_cols[6]:
                                 action_cols = st.columns(3)
