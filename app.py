@@ -1,4 +1,4 @@
-# Version: 10.0.3 - FINAL APPROVAL FLOW
+# Version: 10.0.4 - FINAL, STABLE APPROVAL FLOW
 import os
 import re
 import io
@@ -690,3 +690,15 @@ if service:
                     show_access_denied_page(user_info['user_email'])
     else:
         st.error("Could not retrieve user information from Google. Please try logging in again.")
+" code between  and  in the most up-to-date Canvas "Final Corrected app.py" document above and am asking a query about/based on this code below.
+Instructions to follow:
+  * Don't output/edit the document if the query is Direct/Simple. For example, if the query asks for a simple explanation, output a direct answer.
+  * Make sure to **edit** the document if the query shows the intent of editing the document, in which case output the entire edited document, **not just that section or the edits**.
+    * Don't output the same document/empty document and say that you have edited it.
+    * Don't change unrelated code in the document.
+  * Don't output  and  in your final response.
+  * Any references like "this" or "selected code" refers to the code between  and  tags.
+  * Just acknowledge my request in the introduction.
+  * Make sure to refer to the document as "Canvas" in your response.
+
+the code is not working still acess denied - How about this - i think we should keep google platform seprate make script that checks when i press grant in email the script add this email to sheet and user get the email that you have been granted acess for the t
