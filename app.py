@@ -1,4 +1,4 @@
-# Version: 9.0.1 - CLEANED
+# Version: 10.0.0 - ONE-CLICK USER APPROVAL
 import os
 import re
 import io
@@ -44,18 +44,47 @@ for key, default_value in SESSION_DEFAULTS.items():
 
 # --- AUTHENTICATION & AUTHORIZATION LOGIC ---
 
+def get_gspread_client(read_only=True):
+    """Initializes and returns a gspread client."""
+    if read_only:
+        scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly']
+    else:
+        # NEW: Scope for writing to the sheet
+        scopes = ['https://www.googleapis.com/auth/spreadsheets']
+    
+    creds_dict = st.secrets["gspread_service_account"]
+    creds = ServiceAccountCredentials.from_service_account_info(creds_dict, scopes=scopes)
+    client = gspread.authorize(creds)
+    return client
+
+@st.cache_data(ttl=60)
 def get_authorized_users():
     try:
-        scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-        creds_dict = st.secrets["gspread_service_account"]
-        creds = ServiceAccountCredentials.from_service_account_info(creds_dict, scopes=scopes)
-        client = gspread.authorize(creds)
+        client = get_gspread_client(read_only=True)
         sheet = client.open_by_url(AUTHORIZED_USERS_SHEET_URL).sheet1
         user_emails = sheet.col_values(1)
         return {email.lower().strip() for email in user_emails if email}
     except Exception as e:
-        st.error(f"FATAL: Could not check for authorized users. Error: {e}")
+        st.error(f"FATAL: Could not read authorized users list. Error: {e}")
         return None
+
+def grant_access_to_user(email_to_add):
+    """Appends a new user's email to the authorization sheet."""
+    try:
+        client = get_gspread_client(read_only=False)
+        sheet = client.open_by_url(AUTHORIZED_USERS_SHEET_URL).sheet1
+        # Check if user already exists to avoid duplicates
+        existing_users = {email.lower().strip() for email in sheet.col_values(1) if email}
+        if email_to_add.lower().strip() not in existing_users:
+            sheet.append_row([email_to_add])
+            get_authorized_users.clear() # Clear cache to reflect the new user
+            return True, f"Access granted to {email_to_add}."
+        else:
+            return True, f"{email_to_add} already has access."
+    except Exception as e:
+        st.error(f"Failed to grant access automatically: {e}")
+        return False, "Could not grant access."
+
 
 def handle_user_login():
     if 'google_creds' in st.session_state and st.session_state.google_creds:
@@ -108,12 +137,33 @@ def handle_user_login():
         return None
 
 def send_authorization_request_email(user_email, developer_email, app_email, app_password):
-    msg = EmailMessage()
-    msg.set_content(f"User {user_email} has requested access to {APP_NAME}.")
-    msg['Subject'] = f"Access Request for {APP_NAME}"
-    msg['From'] = app_email
-    msg['To'] = developer_email
     try:
+        app_url = st.secrets["google_creds"]["web"]["redirect_uris"][0]
+        approval_link = f"{app_url}?action=approve&email={user_email}"
+
+        html_content = f"""
+        <html>
+        <body style="font-family: sans-serif; text-align: center; padding: 40px;">
+            <div style="max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px; padding: 20px;">
+                <h2>Access Request for {APP_NAME}</h2>
+                <p>A new user has requested access to the application.</p>
+                <p style="font-size: 1.2em; margin: 20px 0;"><b>User's Email:</b> {user_email}</p>
+                <p>To grant access, click the button below. You must be logged into the app as an authorized user in the same browser.</p>
+                <a href="{approval_link}" style="background-color: #28a745; color: white; padding: 14px 25px; text-align: center; text-decoration: none; display: inline-block; border-radius: 8px; font-size: 16px; margin-top: 20px;">
+                    Grant Access
+                </a>
+                <p style="font-size: 0.8em; color: #777; margin-top: 30px;">If the button does not work, you can copy and paste this link into your browser:<br><a href="{approval_link}">{approval_link}</a></p>
+            </div>
+        </body>
+        </html>
+        """
+        msg = EmailMessage()
+        msg['Subject'] = f"Access Request for {APP_NAME} from {user_email}"
+        msg['From'] = app_email
+        msg['To'] = developer_email
+        msg.set_content(f"User {user_email} has requested access. Please open this email in an HTML-compatible viewer to approve.")
+        msg.add_alternative(html_content, subtype='html')
+        
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
             server.login(app_email, app_password)
@@ -127,7 +177,7 @@ def show_access_denied_page(user_email):
     st.title("🔒 Access Denied")
     st.error(f"The account **{user_email}** is not authorized.")
     if st.session_state.authorization_request_sent:
-        st.success("Your request has been sent.")
+        st.success("Your request has been sent to the administrator.")
     else:
         if st.button("Request Authorization", type="primary"):
             creds = st.secrets.get("email_credentials", {})
@@ -146,19 +196,19 @@ def get_drive_storage_info(_service):
         about = _service.about().get(fields='storageQuota,user').execute()
         storage = about.get('storageQuota', {})
         user = about.get('user', {})
-        limit = int(storage.get('limit', 1)) # Avoid division by zero
+        limit = int(storage.get('limit', 1)) 
         usage = int(storage.get('usage', 0))
         return {
             'user_name': user.get('displayName', 'N/A'),
             'user_email': user.get('emailAddress', 'N/A'),
             'limit_gb': limit / (1024**3),
             'usage_gb': usage / (1024**3),
-            'usage_percent': (usage / limit * 100)
+            'usage_percent': (usage / limit * 100) if limit > 0 else 0
         }
     except Exception: return None
 
 # --- HELPER & FEATURE FUNCTIONS ---
-
+# ... (All other feature functions like extract_file_id_from_link, format_storage, etc. are unchanged)
 def extract_file_id_from_link(link):
     if not link: return None
     patterns = [r'/file/d/([a-zA-Z0-9_-]+)', r'/drive/folders/([a-zA-Z0-9_-]+)', r'id=([a-zA-Z0-9_-]+)', r'/d/([a-zA-Z0-9_-]+)/']
@@ -173,7 +223,7 @@ def format_storage(size_in_gb):
 
 def get_file_icon(item):
     if item.get('is_folder_sort') == 1 or item.get('mimeType') == 'application/vnd.google-apps.folder': return "📁"
-    mime_type = item.get('effective_mime', item.get('mimeType', '')); icon_map = {'application/pdf': '📕','application/vnd.google-apps.document': '📝','application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📝','application/vnd.google-apps.spreadsheet': '📊','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '📊','application/vnd.google-apps.presentation': '📽️','application/vnd.openxmlformats-officedocument.presentationml.presentation': '📽️','application/zip': '📦','application/x-zip-compressed': '📦'}
+    mime_type = item.get('effective_mime', item.get('mimeType', '')); icon_map = {'application/pdf': '📕','application/vnd.google-apps.document': '📝','application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📝','application/vnd.google-apps.spreadsheet': '📊','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '📊','application/vnd.google-apps.presentation': '📽️','application/vnd.openxmlformats-officedocument.presentationml.presentation': '📽️','application/zip': '📦','application/x-zip-compressed': '�'}
     if mime_type.startswith('image/'): return '🖼️'
     if mime_type.startswith('audio/'): return '🎵'
     if mime_type.startswith('video/'): return '🎞️'
@@ -614,6 +664,19 @@ service = handle_user_login()
 if service:
     user_info = get_drive_storage_info(service)
     if user_info:
+        # --- Handle Approval Action ---
+        query_params = st.query_params
+        if query_params.get("action") == "approve" and "email" in query_params:
+            email_to_add = query_params.get("email")
+            st.query_params.clear() # Clear the action from the URL
+            st.info(f"Processing approval request for **{email_to_add}**...")
+            success, message = grant_access_to_user(email_to_add)
+            if success:
+                st.success(f"✅ {message}")
+            else:
+                st.error(f"❌ {message}")
+
+        # --- Normal Authorization Check ---
         authorized_users = get_authorized_users()
         if authorized_users is not None:
             if user_info['user_email'].lower().strip() in authorized_users:
@@ -622,3 +685,4 @@ if service:
                 show_access_denied_page(user_info['user_email'])
     else:
         st.error("Could not retrieve user information from Google. Please try logging in again.")
+�
