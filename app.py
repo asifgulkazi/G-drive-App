@@ -1,4 +1,4 @@
-# Version: 10.0.0 - ONE-CLICK USER APPROVAL
+# Version: 10.0.2 - One ClickAPPROVAL FLOW FIX
 import os
 import re
 import io
@@ -49,7 +49,6 @@ def get_gspread_client(read_only=True):
     if read_only:
         scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly']
     else:
-        # NEW: Scope for writing to the sheet
         scopes = ['https://www.googleapis.com/auth/spreadsheets']
     
     creds_dict = st.secrets["gspread_service_account"]
@@ -73,11 +72,10 @@ def grant_access_to_user(email_to_add):
     try:
         client = get_gspread_client(read_only=False)
         sheet = client.open_by_url(AUTHORIZED_USERS_SHEET_URL).sheet1
-        # Check if user already exists to avoid duplicates
         existing_users = {email.lower().strip() for email in sheet.col_values(1) if email}
         if email_to_add.lower().strip() not in existing_users:
             sheet.append_row([email_to_add])
-            get_authorized_users.clear() # Clear cache to reflect the new user
+            get_authorized_users.clear()
             return True, f"Access granted to {email_to_add}."
         else:
             return True, f"{email_to_add} already has access."
@@ -208,7 +206,7 @@ def get_drive_storage_info(_service):
     except Exception: return None
 
 # --- HELPER & FEATURE FUNCTIONS ---
-# ... (All other feature functions like extract_file_id_from_link, format_storage, etc. are unchanged)
+# ... (All other feature functions are unchanged)
 def extract_file_id_from_link(link):
     if not link: return None
     patterns = [r'/file/d/([a-zA-Z0-9_-]+)', r'/drive/folders/([a-zA-Z0-9_-]+)', r'id=([a-zA-Z0-9_-]+)', r'/d/([a-zA-Z0-9_-]+)/']
@@ -223,7 +221,7 @@ def format_storage(size_in_gb):
 
 def get_file_icon(item):
     if item.get('is_folder_sort') == 1 or item.get('mimeType') == 'application/vnd.google-apps.folder': return "📁"
-    mime_type = item.get('effective_mime', item.get('mimeType', '')); icon_map = {'application/pdf': '📕','application/vnd.google-apps.document': '📝','application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📝','application/vnd.google-apps.spreadsheet': '📊','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '📊','application/vnd.google-apps.presentation': '📽️','application/vnd.openxmlformats-officedocument.presentationml.presentation': '📽️','application/zip': '📦','application/x-zip-compressed': '�'}
+    mime_type = item.get('effective_mime', item.get('mimeType', '')); icon_map = {'application/pdf': '📕','application/vnd.google-apps.document': '📝','application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📝','application/vnd.google-apps.spreadsheet': '📊','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '📊','application/vnd.google-apps.presentation': '📽️','application/vnd.openxmlformats-officedocument.presentationml.presentation': '📽️','application/zip': '📦','application/x-zip-compressed': '📦'}
     if mime_type.startswith('image/'): return '🖼️'
     if mime_type.startswith('audio/'): return '🎵'
     if mime_type.startswith('video/'): return '🎞️'
@@ -416,6 +414,7 @@ def run_main_app(service, user_info):
             else:
                 if st.button("🔄 Refresh Statistics"):
                     st.session_state.stats_loaded = False
+                    get_drive_statistics.clear()
                     st.rerun()
                 
                 drive_stats = st.session_state.get('drive_stats')
@@ -669,19 +668,23 @@ if service:
         if query_params.get("action") == "approve" and "email" in query_params:
             email_to_add = query_params.get("email")
             st.query_params.clear() # Clear the action from the URL
+            st.title("User Approval")
             st.info(f"Processing approval request for **{email_to_add}**...")
             success, message = grant_access_to_user(email_to_add)
             if success:
                 st.success(f"✅ {message}")
             else:
                 st.error(f"❌ {message}")
-
+            if st.button("⬅️ Back to Dashboard"):
+                st.rerun()
+        
         # --- Normal Authorization Check ---
-        authorized_users = get_authorized_users()
-        if authorized_users is not None:
-            if user_info['user_email'].lower().strip() in authorized_users:
-                run_main_app(service, user_info)
-            else:
-                show_access_denied_page(user_info['user_email'])
+        else:
+            authorized_users = get_authorized_users()
+            if authorized_users is not None:
+                if user_info['user_email'].lower().strip() in authorized_users:
+                    run_main_app(service, user_info)
+                else:
+                    show_access_denied_page(user_info['user_email'])
     else:
         st.error("Could not retrieve user information from Google. Please try logging in again.")
