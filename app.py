@@ -134,3 +134,23 @@ else:
                             file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
                             st.success(f"File uploaded successfully! File ID: `{file.get('id')}`")
                         except HttpError as error:
+                            st.error(f'An error occurred during upload: {error}')
+
+        with tab3:
+            st.header("Delete a File from Drive")
+            file_id_to_delete = st.text_input("Enter the File ID to delete")
+            if st.button("Delete File", type="primary"):
+                if file_id_to_delete:
+                    with st.spinner('Deleting...'):
+                        try:
+                            drive_service.files().delete(fileId=file_id_to_delete).execute()
+                            st.success(f"File with ID `{file_id_to_delete}` deleted successfully.")
+                        except HttpError as error:
+                            st.error(f'An error occurred while deleting: {error}. Check if the File ID is correct and you have permission.')
+                else:
+                    st.warning("Please enter a File ID.")
+
+    # Logout button
+    if st.button("Logout"):
+        del st.session_state.credentials
+        st.rerun()
