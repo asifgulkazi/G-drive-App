@@ -20,7 +20,7 @@ from google.oauth2.service_account import Credentials as ServiceAccountCredentia
 
 # --- Configuration ---
 # !!! IMPORTANT !!! - YOU MUST REPLACE THIS URL WITH YOUR OWN GOOGLE SHEET URL IN STEP 3
-AUTHORIZED_USERS_SHEET_URL = "https://docs.google.com/spreadsheets/d/your_sheet_id_here/edit"
+AUTHORIZED_USERS_SHEET_URL = "https://docs.google.com/spreadsheets/d/1Z_SANZWikklPWXntLojdMgwXJs45FDFPKxr4gRBNqco/edit?gid=0#gid=0"
 APP_NAME = "Cloud Drive Manager"
 
 # --- Session State Initialization ---
