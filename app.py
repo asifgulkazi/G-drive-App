@@ -1,4 +1,4 @@
-# Version: 10.0.2 - One ClickAPPROVAL FLOW FIX
+# Version: 10.0.3 - FINAL APPROVAL FLOW
 import os
 import re
 import io
@@ -206,7 +206,6 @@ def get_drive_storage_info(_service):
     except Exception: return None
 
 # --- HELPER & FEATURE FUNCTIONS ---
-# ... (All other feature functions are unchanged)
 def extract_file_id_from_link(link):
     if not link: return None
     patterns = [r'/file/d/([a-zA-Z0-9_-]+)', r'/drive/folders/([a-zA-Z0-9_-]+)', r'id=([a-zA-Z0-9_-]+)', r'/d/([a-zA-Z0-9_-]+)/']
@@ -665,8 +664,11 @@ if service:
     if user_info:
         # --- Handle Approval Action ---
         query_params = st.query_params
-        if query_params.get("action") == "approve" and "email" in query_params:
-            email_to_add = query_params.get("email")
+        # FIX: Check for list values in query_params
+        action = query_params.get("action", [None])[0]
+        email_to_add = query_params.get("email", [None])[0]
+
+        if action == "approve" and email_to_add:
             st.query_params.clear() # Clear the action from the URL
             st.title("User Approval")
             st.info(f"Processing approval request for **{email_to_add}**...")
