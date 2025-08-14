@@ -1,5 +1,4 @@
-# [This is the full code from 'drive_gui_app.py' that you provided previously]
-# Version: 6.2.0 - FINAL, CORRECTED REDIRECT_URI
+# Version: 6.2.2 - FINAL, CLEANED
 import os
 import re
 import io
@@ -19,64 +18,8 @@ from google.oauth2.credentials import Credentials
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 
 # --- Configuration ---
-# !!! IMPORTANT !!! - YOU MUST REPLACE THIS URL WITH YOUR OWN GOOGLE SHEET URL IN STEP 3
+# Your specific Google Sheet for managing user access.
 AUTHORIZED_USERS_SHEET_URL = "https://docs.google.com/spreadsheets/d/1Z_SANZWikklPWXntLojdMgwXJs45FDFPKxr4gRBNqco/edit?gid=0#gid=0"
-APP_NAME = "Cloud Drive Manager"
-
-# --- Session State Initialization ---
-SESSION_DEFAULTS = {
-    'google_creds': None, 'drive_service': None, 'page': "Dashboard", 'user_info': None,
-    'authorization_request_sent': False,
-    'stats_loaded': False, 'fetched_file_details': None, 'folder_contents_df': None,
-    'edited_df': pd.DataFrame(), 'copied_files_df': None, 'skipped_files_df': None,
-    'dest_id': None, 'current_folder_id': 'root',
-    'folder_path': [{'name': 'My Drive', 'id': 'root'}],
-    'item_to_rename': None, 'item_to_delete': None, 'folder_cache': {},
-    'initial_fetch_done': False, 'cleaner_link': "", 'cleaner_state': 'initial',
-    'cleaner_root_details': None, 'cleaner_all_items': [],
-    'cleaner_success_log': None, 'cleaner_skipped_log': None,
-    'cleaner_dest_folder_name': None
-}
-for key, default_value in SESSION_DEFAULTS.items():
-    if key not in st.session_state:
-        st.session_state[key] = default_value
-
-# --- [The rest of the full code you provided goes here, unchanged] ---
-# ... (all functions from get_authorized_users to run_main_app) ...
-
-# --- FINAL APP ENTRY POINT ---
-st.set_page_config(page_title=APP_NAME, layout="centered")
-
-# This single function call handles everything: login, redirects, authorization, and the access request workflow.
-service = get_authenticated_service()
-
-if service:
-    # If the service object is returned, the user is fully authenticated and authorized.
-    # We can now run the main application with its full wide layout.
-    run_main_app(service)
-
-# [The full code from the file you uploaded is assumed here]
-# Version: 6.2.0 - FINAL, CORRECTED REDIRECT_URI
-import os
-import re
-import io
-import pandas as pd
-import streamlit as st
-import ast
-import gspread
-import smtplib
-import ssl
-from collections import Counter
-from email.message import EmailMessage
-from google.auth.transport.requests import Request as GoogleAuthRequest
-from google_auth_oauthlib.flow import Flow
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from google.oauth2.credentials import Credentials
-from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-
-# --- Configuration ---
-AUTHORIZED_USERS_SHEET_URL = "https://docs.google.com/spreadsheets/d/1WFsf1ygkyLkwZUaY5rzJJLBk6XlwNurKUaI-eVGFh_U/edit#gid=0"
 APP_NAME = "Cloud Drive Manager"
 
 # --- Session State Initialization ---
@@ -215,15 +158,18 @@ def get_authenticated_service():
         st.rerun()
 
     # --- Initial Login Flow ---
-    client_config = {"web": st.secrets["google_creds"]["web"]}
-    scopes = ['https://www.googleapis.com/auth/drive']
-    
-    # CRITICAL FIX: Pass the redirect URI as a string, not a list.
-    flow = Flow.from_client_config(
-        client_config, 
-        scopes=scopes, 
-        redirect_uri=client_config["web"]["redirect_uris"][0]
-    )
+    try:
+        client_config = {"web": st.secrets["google_creds"]["web"]}
+        scopes = ['https://www.googleapis.com/auth/drive']
+        flow = Flow.from_client_config(
+            client_config, 
+            scopes=scopes, 
+            redirect_uri=client_config["web"]["redirect_uris"][0]
+        )
+    except KeyError:
+        st.error("FATAL: Your OAuth credentials (`google_creds`) are missing or malformed in the Streamlit secrets.")
+        st.stop()
+
 
     auth_code = st.query_params.get('code')
     if auth_code:
