@@ -12,9 +12,9 @@ SCOPES = ['https://www.googleapis.com/auth/drive']
 
 # --- Helper Functions ---
 def get_redirect_uri():
-    """Gets the redirect URI from Streamlit's server context."""
-    # This is the standard way to get the base URL of a deployed Streamlit app.
-    return st.get_option("server.baseUrlPath").strip('/')
+    """Returns the hardcoded redirect URI for the deployed app."""
+    # This now uses your specific app URL to ensure Google redirects correctly.
+    return "https://g-drive-app.streamlit.app"
 
 def initialize_google_flow():
     """Initializes the Google OAuth flow."""
@@ -34,7 +34,7 @@ def initialize_google_flow():
         flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=get_redirect_uri())
         return flow
     except KeyError as e:
-        st.error(f"Missing Google credential in Streamlit secrets: {e}. Please check your secrets.toml configuration.")
+        st.error(f"Missing Google credential in Streamlit secrets: {e}. Please check your secrets configuration in Streamlit Cloud.")
         return None
     except Exception as e:
         st.error(f"An error occurred during Google Flow initialization: {e}")
@@ -134,23 +134,3 @@ else:
                             file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
                             st.success(f"File uploaded successfully! File ID: `{file.get('id')}`")
                         except HttpError as error:
-                            st.error(f'An error occurred during upload: {error}')
-
-        with tab3:
-            st.header("Delete a File from Drive")
-            file_id_to_delete = st.text_input("Enter the File ID to delete")
-            if st.button("Delete File", type="primary"):
-                if file_id_to_delete:
-                    with st.spinner('Deleting...'):
-                        try:
-                            drive_service.files().delete(fileId=file_id_to_delete).execute()
-                            st.success(f"File with ID `{file_id_to_delete}` deleted successfully.")
-                        except HttpError as error:
-                            st.error(f'An error occurred while deleting: {error}. Check if the File ID is correct and you have permission.')
-                else:
-                    st.warning("Please enter a File ID.")
-
-    # Logout button
-    if st.button("Logout"):
-        del st.session_state.credentials
-        st.rerun()
