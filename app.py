@@ -662,43 +662,33 @@ service = handle_user_login()
 if service:
     user_info = get_drive_storage_info(service)
     if user_info:
-        # --- Handle Approval Action ---
-        query_params = st.query_params
-        # FIX: Check for list values in query_params
-        action = query_params.get("action", [None])[0]
-        email_to_add = query_params.get("email", [None])[0]
+        authorized_users = get_authorized_users()
+        if authorized_users is not None:
+            # First, check if the current user is authorized.
+            is_authorized = user_info['user_email'].lower().strip() in authorized_users
+            
+            # Next, check for an approval action in the URL.
+            query_params = st.query_params
+            action = query_params.get("action", [None])[0]
+            email_to_add = query_params.get("email", [None])[0]
 
-        if action == "approve" and email_to_add:
-            st.query_params.clear() # Clear the action from the URL
-            st.title("User Approval")
-            st.info(f"Processing approval request for **{email_to_add}**...")
-            success, message = grant_access_to_user(email_to_add)
-            if success:
-                st.success(f"✅ {message}")
-            else:
-                st.error(f"❌ {message}")
-            if st.button("⬅️ Back to Dashboard"):
-                st.rerun()
-        
-        # --- Normal Authorization Check ---
-        else:
-            authorized_users = get_authorized_users()
-            if authorized_users is not None:
-                if user_info['user_email'].lower().strip() in authorized_users:
-                    run_main_app(service, user_info)
+            # The approval action can only be performed by an already authorized user.
+            if is_authorized and action == "approve" and email_to_add:
+                st.query_params.clear()
+                st.title("User Approval")
+                st.info(f"Processing approval request for **{email_to_add}**...")
+                success, message = grant_access_to_user(email_to_add)
+                if success:
+                    st.success(f"✅ {message}")
                 else:
-                    show_access_denied_page(user_info['user_email'])
+                    st.error(f"❌ {message}")
+                if st.button("⬅️ Back to Dashboard"):
+                    st.rerun()
+            # If the user is authorized and there's no approval action, run the main app.
+            elif is_authorized:
+                run_main_app(service, user_info)
+            # Otherwise, the user is not authorized.
+            else:
+                show_access_denied_page(user_info['user_email'])
     else:
         st.error("Could not retrieve user information from Google. Please try logging in again.")
-" code between  and  in the most up-to-date Canvas "Final Corrected app.py" document above and am asking a query about/based on this code below.
-Instructions to follow:
-  * Don't output/edit the document if the query is Direct/Simple. For example, if the query asks for a simple explanation, output a direct answer.
-  * Make sure to **edit** the document if the query shows the intent of editing the document, in which case output the entire edited document, **not just that section or the edits**.
-    * Don't output the same document/empty document and say that you have edited it.
-    * Don't change unrelated code in the document.
-  * Don't output  and  in your final response.
-  * Any references like "this" or "selected code" refers to the code between  and  tags.
-  * Just acknowledge my request in the introduction.
-  * Make sure to refer to the document as "Canvas" in your response.
-
-the code is not working still acess denied - How about this - i think we should keep google platform seprate make script that checks when i press grant in email the script add this email to sheet and user get the email that you have been granted acess for the t
