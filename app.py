@@ -1,4 +1,4 @@
-# Version: 12.0.0 - STABLE BUTTON-BASED APPROVAL
+# Version: 13.0.0 - WEB APP SCRIPT APPROVAL
 import os
 import re
 import io
@@ -44,39 +44,19 @@ for key, default_value in SESSION_DEFAULTS.items():
 
 # --- AUTHENTICATION & AUTHORIZATION LOGIC ---
 
-def get_gspread_client(read_only=True):
-    """Initializes and returns a gspread client."""
-    scopes = ['https://www.googleapis.com/auth/spreadsheets'] if not read_only else ['https://www.googleapis.com/auth/spreadsheets.readonly']
-    creds_dict = st.secrets["gspread_service_account"]
-    creds = ServiceAccountCredentials.from_service_account_info(creds_dict, scopes=scopes)
-    return gspread.authorize(creds)
-
 @st.cache_data(ttl=60)
 def get_authorized_users():
     try:
-        client = get_gspread_client(read_only=True)
+        scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly']
+        creds_dict = st.secrets["gspread_service_account"]
+        creds = ServiceAccountCredentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
         sheet = client.open_by_url(AUTHORIZED_USERS_SHEET_URL).sheet1
         user_emails = sheet.col_values(1)
         return {email.lower().strip() for email in user_emails if email}
     except Exception as e:
         st.error(f"FATAL: Could not read authorized users list. Error: {e}")
         return None
-
-def grant_access_to_user(email_to_add):
-    """Appends a new user's email to the authorization sheet."""
-    try:
-        client = get_gspread_client(read_only=False)
-        sheet = client.open_by_url(AUTHORIZED_USERS_SHEET_URL).sheet1
-        existing_users = {email.lower().strip() for email in sheet.col_values(1) if email}
-        if email_to_add.lower().strip() not in existing_users:
-            sheet.append_row([email_to_add])
-            get_authorized_users.clear()
-            return True, f"Access granted to {email_to_add}."
-        else:
-            return True, f"{email_to_add} already has access."
-    except Exception as e:
-        st.error(f"Failed to grant access automatically: {e}")
-        return False, "Could not grant access."
 
 def handle_user_login():
     if 'google_creds' in st.session_state and st.session_state.google_creds:
@@ -117,15 +97,17 @@ def handle_user_login():
 
 def send_authorization_request_email(user_email, developer_email, app_email, app_password):
     try:
-        app_url = st.secrets["google_creds"]["web"]["redirect_uris"][0]
-        approval_link = f"{app_url}?action=approve&email={user_email}"
+        # NEW: Use the Web App URL from secrets
+        approval_script_url = st.secrets["approval_script"]["url"]
+        approval_link = f"{approval_script_url}?email={user_email}"
+        
         html_content = f"""
         <html><body style="font-family: sans-serif; text-align: center; padding: 40px; background-color: #f4f4f4;">
             <div style="max-width: 600px; margin: auto; background-color: white; border: 1px solid #ddd; border-radius: 10px; padding: 20px;">
                 <h2>Access Request for {APP_NAME}</h2>
                 <p>A new user has requested access to the application.</p>
                 <p style="font-size: 1.2em; margin: 20px 0;"><b>User's Email:</b> {user_email}</p>
-                <p>To grant access, click the button below. You must be logged into the app as an authorized user in the same browser.</p>
+                <p>To grant access, click the button below. This will run a script to add the user and notify them.</p>
                 <a href="{approval_link}" style="background-color: #28a745; color: white; padding: 14px 25px; text-align: center; text-decoration: none; display: inline-block; border-radius: 8px; font-size: 16px; margin-top: 20px;">Grant Access</a>
                 <p style="font-size: 0.8em; color: #777; margin-top: 30px;">If the button does not work, you can copy this link into your browser:<br><a href="{approval_link}">{approval_link}</a></p>
             </div></body></html>"""
@@ -140,6 +122,9 @@ def send_authorization_request_email(user_email, developer_email, app_email, app
             server.login(app_email, app_password)
             server.send_message(msg)
         return True
+    except KeyError:
+        st.error("FATAL: Approval script URL is not configured in secrets. Cannot send request.")
+        return False
     except Exception as e:
         st.error(f"Could not send request email. Error: {e}"); return False
 
@@ -167,7 +152,7 @@ def get_drive_storage_info(_service):
         return {'user_name': user.get('displayName', 'N/A'), 'user_email': user.get('emailAddress', 'N/A'), 'limit_gb': limit / (1024**3), 'usage_gb': usage / (1024**3), 'usage_percent': (usage / limit * 100) if limit > 0 else 0}
     except Exception: return None
 
-# --- HELPER & FEATURE FUNCTIONS (UNCHANGED, BUT WITH PERFORMANCE TWEAKS) ---
+# --- HELPER & FEATURE FUNCTIONS (UNCHANGED) ---
 def extract_file_id_from_link(link):
     if not link: return None
     patterns = [r'/file/d/([a-zA-Z0-9_-]+)', r'/drive/folders/([a-zA-Z0-9_-]+)', r'id=([a-zA-Z0-9_-]+)', r'/d/([a-zA-Z0-9_-]+)/']
