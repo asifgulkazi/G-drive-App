@@ -434,7 +434,7 @@ def run_main_app(service, user_info):
                                             except HttpError as e: st.error(f"Rename failed: {e}")
                                             st.session_state.item_to_rename = None; st.rerun()
                                         if form_cols[1].form_submit_button("❌", use_container_width=True): st.session_state.item_to_rename = None; st.rerun()
-                                else: prefix = "� " if not item.get('is_owned_by_me', True) else ""; st.write(f"{prefix}{get_file_icon(item)} {item['name']}")
+                                else: prefix = "🤝 " if not item.get('is_owned_by_me', True) else ""; st.write(f"{prefix}{get_file_icon(item)} {item['name']}")
                             row_cols[2].write("Folder" if is_folder else "File"); row_cols[3].write(f"{int(item.get('size', 0)) / (1024*1024):.2f} MB" if not is_folder and item.get('size') else ""); row_cols[4].write(pd.to_datetime(item['modifiedTime']).strftime('%y-%m-%d %H:%M')); row_cols[5].write(item.get('effective_owner_name', 'N/A'))
                             with row_cols[6]:
                                 action_cols = st.columns(3)
@@ -622,4 +622,3 @@ if service:
                 show_access_denied_page(user_info['user_email'])
     else:
         st.error("Could not retrieve user information from Google. Please try logging in again.")
-�
