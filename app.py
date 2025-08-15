@@ -1,4 +1,4 @@
-# Version: 13.1.1 - Final Merged Version with Bug Fixes
+# Version: 13.1.2 - Final Merged Version with Bug Fixes & Features
 import os
 import re
 import io
@@ -32,7 +32,7 @@ SESSION_DEFAULTS = {
     'edited_df': pd.DataFrame(), 'copied_files_df': None, 'skipped_files_df': None,
     'dest_id': None, 'current_folder_id': 'root',
     'folder_path': [{'name': 'My Drive', 'id': 'root'}],
-    'item_to_rename': None, 'item_to_delete': None, 'folder_cache': {},
+    'item_to_rename': None, 'item_to_delete': None,
     'initial_fetch_done': False, 'cleaner_link': "", 'cleaner_state': 'initial',
     'cleaner_root_details': None, 'cleaner_all_items': [],
     'cleaner_success_log': None, 'cleaner_skipped_log': None,
@@ -161,9 +161,9 @@ def extract_file_id_from_link(link):
     return None
 
 def format_storage(size_in_bytes):
-    if size_in_bytes is None: return "N/A"
+    if size_in_bytes is None or size_in_bytes == 0: return "0 B"
     power = 1024; n = 0
-    power_labels = {0: '', 1: 'KB', 2: 'MB', 3: 'GB', 4: 'TB'}
+    power_labels = {0: 'B', 1: 'KB', 2: 'MB', 3: 'GB', 4: 'TB'}
     size_in_bytes = int(size_in_bytes)
     while size_in_bytes >= power and n < len(power_labels) -1 :
         size_in_bytes /= power
@@ -404,95 +404,79 @@ def run_main_app(service, user_info):
     elif st.session_state.page == "File Explorer":
         st.header("🗂️ My Drive Explorer")
         st.info("Directly browse, rename, and delete files and folders in your Google Drive.")
-        def fetch_and_set_initial_items():
-            with st.spinner("Performing initial fetch..."):
-                get_and_sort_folder_items(service, st.session_state.current_folder_id, storage['user_email'])
-                st.toast(f"Fetched folder contents.", icon="✅")
-            st.session_state.initial_fetch_done = True
-            st.rerun()
-        if not st.session_state.initial_fetch_done:
-            st.markdown("<br>", unsafe_allow_html=True)
-            c1, c2, c3 = st.columns([1,2,1])
-            c2.button("🚀 Start Exploring My Drive", on_click=fetch_and_set_initial_items, use_container_width=True, type="primary")
-        else:
-            st.markdown("<a id='top'></a>", unsafe_allow_html=True)
-            toolbar_cols = st.columns([4, 1])
-            with toolbar_cols[0]:
-                nav_items = []
-                if len(st.session_state.folder_path) > 1: nav_items.append({'type': 'back', 'name': '⬅️ Back'})
-                for i, folder in enumerate(st.session_state.folder_path): nav_items.append({'type': 'breadcrumb', 'name': folder['name'], 'id': folder['id'], 'index': i})
-                nav_cols = st.columns(len(nav_items))
-                for i, item in enumerate(nav_items):
-                    with nav_cols[i]:
-                        if item['type'] == 'back':
-                            if st.button(item['name'], key='nav_back', use_container_width=True):
-                                st.session_state.folder_path.pop()
-                                st.session_state.update(current_folder_id=st.session_state.folder_path[-1]['id'], item_to_rename=None, item_to_delete=None)
-                                st.rerun()
-                        elif item['type'] == 'breadcrumb':
-                            if st.button(item['name'], key=f"path_{item['id']}", use_container_width=True, help=item['name']):
-                                st.session_state.update(current_folder_id=item['id'], folder_path=st.session_state.folder_path[:item['index']+1], item_to_rename=None, item_to_delete=None)
-                                st.rerun()
-            current_folder_id = st.session_state.current_folder_id
-            items_to_display = get_and_sort_folder_items(service, current_folder_id, storage['user_email'])
-            with toolbar_cols[1]:
-                if items_to_display:
-                    export_data = [{'Name': item['name'], 'Type': "Folder" if item['is_folder_sort'] == 1 else "File", 'Size (MB)': f"{int(item.get('size', 0))/(1024*1024):.2f}" if item['is_folder_sort'] != 1 and item.get('size') else "", 'Modified Date': pd.to_datetime(item['modifiedTime']).strftime('%Y-%m-%d %H:%M'), 'Owner': item.get('effective_owner_name', 'N/A'), 'URL': item.get('webViewLink', '')} for item in items_to_display]
-                    df_export = pd.DataFrame(export_data)
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df_export.to_excel(writer, index=False, sheet_name='Folder_Contents')
-                        ws = writer.sheets['Folder_Contents']
-                        for row_idx in range(2, ws.max_row + 1):
-                            cell = ws.cell(row=row_idx, column=df_export.columns.get_loc('URL') + 1)
-                            if cell.value: cell.hyperlink, cell.style = cell.value, "Hyperlink"
-                    st.download_button(label="📥 Download Excel", data=output.getvalue(), file_name=f"{st.session_state.folder_path[-1]['name'].replace(' ', '_')}_contents.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-            st.markdown("---")
-            st.markdown("""<style>.sticky-header{position:sticky;top:50px;background-color:white;z-index:10;display:flex;flex-direction:row;align-items:center;padding:10px 5px;border-bottom:1px solid #e6e6e6;}.header-col{font-weight:bold;text-align:left;padding:0 4px;color:#262730;}.back-to-top{position:fixed;bottom:20px;right:25px;font-size:25px;background-color:rgba(0,0,0,0.4);color:white;width:50px;height:50px;text-align:center;border-radius:50%;cursor:pointer;opacity:0.7;transition:opacity .3s;text-decoration:none;line-height:50px;z-index:1000;}.back-to-top:hover{opacity:1;}</style>""", unsafe_allow_html=True)
-            st.markdown('<a href="#top" class="back-to-top">⬆️</a>', unsafe_allow_html=True)
-            if items_to_display is not None:
-                if not items_to_display: st.info("This folder is empty.")
-                else:
-                    col_widths, headers = [0.8, 4, 1, 1, 1.5, 1.5, 2], ["", "Name", "Type", "Size", "Modified", "Owner", "Actions"]
-                    header_html = ''.join([f'<div class="header-col" style="flex-grow:{w};flex-basis:0;">{h}</div>' for h, w in zip(headers, col_widths)])
-                    st.markdown(f'<div class="sticky-header">{header_html}</div>', unsafe_allow_html=True)
-                    for item in items_to_display:
-                        row_cols = st.columns(col_widths); is_folder = item['is_folder_sort'] == 1; nav_id = item.get('shortcutDetails', {}).get('targetId') or item['id']
-                        if is_folder:
-                            if row_cols[0].button("➡️", key=f"open_{item['id']}", help="Open folder"):
+        
+        toolbar_cols = st.columns([4, 1])
+        with toolbar_cols[0]:
+            nav_items = []
+            if len(st.session_state.folder_path) > 1: nav_items.append({'type': 'back', 'name': '⬅️ Back'})
+            for i, folder in enumerate(st.session_state.folder_path): nav_items.append({'type': 'breadcrumb', 'name': folder['name'], 'id': folder['id'], 'index': i})
+            nav_cols = st.columns(len(nav_items))
+            for i, item in enumerate(nav_items):
+                with nav_cols[i]:
+                    if item['type'] == 'back':
+                        if st.button(item['name'], key='nav_back', use_container_width=True):
+                            st.session_state.folder_path.pop()
+                            st.session_state.update(current_folder_id=st.session_state.folder_path[-1]['id'], item_to_rename=None, item_to_delete=None)
+                            st.rerun()
+                    elif item['type'] == 'breadcrumb':
+                        if st.button(item['name'], key=f"path_{item['id']}", use_container_width=True, help=item['name']):
+                            st.session_state.update(current_folder_id=item['id'], folder_path=st.session_state.folder_path[:item['index']+1], item_to_rename=None, item_to_delete=None)
+                            st.rerun()
+        with toolbar_cols[1]:
+            if st.button("🔄 Refresh View", use_container_width=True):
+                get_and_sort_folder_items.clear()
+                st.rerun()
+
+        current_folder_id = st.session_state.current_folder_id
+        items_to_display = get_and_sort_folder_items(service, current_folder_id, storage['user_email'])
+        
+        st.markdown("---")
+        st.markdown("""<style>.sticky-header{position:sticky;top:50px;background-color:white;z-index:10;display:flex;flex-direction:row;align-items:center;padding:10px 5px;border-bottom:1px solid #e6e6e6;}.header-col{font-weight:bold;text-align:left;padding:0 4px;color:#262730;}.back-to-top{position:fixed;bottom:20px;right:25px;font-size:25px;background-color:rgba(0,0,0,0.4);color:white;width:50px;height:50px;text-align:center;border-radius:50%;cursor:pointer;opacity:0.7;transition:opacity .3s;text-decoration:none;line-height:50px;z-index:1000;}.back-to-top:hover{opacity:1;}</style>""", unsafe_allow_html=True)
+        st.markdown('<a href="#top" class="back-to-top">⬆️</a>', unsafe_allow_html=True)
+        
+        if items_to_display is not None:
+            if not items_to_display: st.info("This folder is empty.")
+            else:
+                col_widths, headers = [0.8, 4, 1, 1, 1.5, 1.5, 2], ["", "Name", "Type", "Size", "Modified", "Owner", "Actions"]
+                header_html = ''.join([f'<div class="header-col" style="flex-grow:{w};flex-basis:0;">{h}</div>' for h, w in zip(headers, col_widths)])
+                st.markdown(f'<div class="sticky-header">{header_html}</div>', unsafe_allow_html=True)
+                for item in items_to_display:
+                    row_cols = st.columns(col_widths); is_folder = item['is_folder_sort'] == 1; nav_id = item.get('shortcutDetails', {}).get('targetId') or item['id']
+                    if is_folder:
+                        if row_cols[0].button("➡️", key=f"open_{item['id']}", help="Open folder"):
+                            get_and_sort_folder_items.clear()
+                            st.session_state.update(current_folder_id=nav_id, folder_path=st.session_state.folder_path + [{'name': item['name'], 'id': nav_id}], item_to_rename=None, item_to_delete=None)
+                            st.rerun()
+                    elif item.get('webViewLink'): row_cols[0].link_button("🔗", item['webViewLink'], help="Open file in new tab")
+                    with row_cols[1]:
+                        if st.session_state.item_to_rename == item['id']:
+                            with st.form(key=f"rename_form_{item['id']}"):
+                                new_name = st.text_input("New Name", value=item['name'], label_visibility="collapsed"); form_cols = st.columns(2)
+                                if form_cols[0].form_submit_button("💾", use_container_width=True):
+                                    try:
+                                        service.files().update(fileId=item['id'], body={'name': new_name}, supportsAllDrives=True).execute()
+                                        get_and_sort_folder_items.clear()
+                                        st.toast(f"Renamed to '{new_name}'", icon="✏️")
+                                    except HttpError as e: st.error(f"Rename failed: {e}")
+                                    st.session_state.item_to_rename = None; st.rerun()
+                                if form_cols[1].form_submit_button("❌", use_container_width=True): st.session_state.item_to_rename = None; st.rerun()
+                        else: prefix = "🤝 " if not item.get('is_owned_by_me', True) else ""; st.write(f"{prefix}{get_file_icon(item)} {item['name']}")
+                    row_cols[2].write("Folder" if is_folder else "File"); row_cols[3].write(f"{int(item.get('size', 0)) / (1024*1024):.2f} MB" if not is_folder and item.get('size') else ""); row_cols[4].write(pd.to_datetime(item['modifiedTime']).strftime('%y-%m-%d %H:%M')); row_cols[5].write(item.get('effective_owner_name', 'N/A'))
+                    with row_cols[6]:
+                        action_cols = st.columns(3)
+                        if action_cols[0].button("✏️", key=f"rename_btn_{item['id']}", help="Rename"): st.session_state.item_to_rename = item['id']; st.rerun()
+                        if action_cols[1].button("🗑️", key=f"delete_btn_{item['id']}", help="Delete"): st.session_state.item_to_delete = item; st.rerun()
+                        if action_cols[2].button("📋", key=f"copy_btn_{item['id']}", help="Copy to my Drive"): st.session_state.update(link_to_copy=item.get('webViewLink'), auto_fetch_on_load=True, page="Cloud Copy"); st.rerun()
+                    if st.session_state.item_to_delete and st.session_state.item_to_delete['id'] == item['id']:
+                        st.warning(f"Are you sure you want to delete **{st.session_state.item_to_delete['name']}**?"); del_cols = st.columns([1,1,4])
+                        if del_cols[0].button("✅ Yes, Delete", key=f"confirm_del_{item['id']}"):
+                            try:
+                                service.files().delete(fileId=st.session_state.item_to_delete['id'], supportsAllDrives=True).execute()
                                 get_and_sort_folder_items.clear()
-                                st.session_state.update(current_folder_id=nav_id, folder_path=st.session_state.folder_path + [{'name': item['name'], 'id': nav_id}], item_to_rename=None, item_to_delete=None)
-                                st.rerun()
-                        elif item.get('webViewLink'): row_cols[0].link_button("🔗", item['webViewLink'], help="Open file in new tab")
-                        with row_cols[1]:
-                            if st.session_state.item_to_rename == item['id']:
-                                with st.form(key=f"rename_form_{item['id']}"):
-                                    new_name = st.text_input("New Name", value=item['name'], label_visibility="collapsed"); form_cols = st.columns(2)
-                                    if form_cols[0].form_submit_button("💾", use_container_width=True):
-                                        try:
-                                            service.files().update(fileId=item['id'], body={'name': new_name}, supportsAllDrives=True).execute()
-                                            get_and_sort_folder_items.clear()
-                                            st.toast(f"Renamed to '{new_name}'", icon="✏️")
-                                        except HttpError as e: st.error(f"Rename failed: {e}")
-                                        st.session_state.item_to_rename = None; st.rerun()
-                                    if form_cols[1].form_submit_button("❌", use_container_width=True): st.session_state.item_to_rename = None; st.rerun()
-                            else: prefix = "🤝 " if not item.get('is_owned_by_me', True) else ""; st.write(f"{prefix}{get_file_icon(item)} {item['name']}")
-                        row_cols[2].write("Folder" if is_folder else "File"); row_cols[3].write(f"{int(item.get('size', 0)) / (1024*1024):.2f} MB" if not is_folder and item.get('size') else ""); row_cols[4].write(pd.to_datetime(item['modifiedTime']).strftime('%y-%m-%d %H:%M')); row_cols[5].write(item.get('effective_owner_name', 'N/A'))
-                        with row_cols[6]:
-                            action_cols = st.columns(3)
-                            if action_cols[0].button("✏️", key=f"rename_btn_{item['id']}", help="Rename"): st.session_state.item_to_rename = item['id']; st.rerun()
-                            if action_cols[1].button("🗑️", key=f"delete_btn_{item['id']}", help="Delete"): st.session_state.item_to_delete = item; st.rerun()
-                            if action_cols[2].button("📋", key=f"copy_btn_{item['id']}", help="Copy to my Drive"): st.session_state.update(link_to_copy=item.get('webViewLink'), auto_fetch_on_load=True, page="Cloud Copy"); st.rerun()
-                        if st.session_state.item_to_delete and st.session_state.item_to_delete['id'] == item['id']:
-                            st.warning(f"Are you sure you want to delete **{st.session_state.item_to_delete['name']}**?"); del_cols = st.columns([1,1,4])
-                            if del_cols[0].button("✅ Yes, Delete", key=f"confirm_del_{item['id']}"):
-                                try:
-                                    service.files().delete(fileId=st.session_state.item_to_delete['id'], supportsAllDrives=True).execute()
-                                    get_and_sort_folder_items.clear()
-                                    st.toast(f"Deleted '{st.session_state.item_to_delete['name']}'", icon="🗑️")
-                                except HttpError as e: st.error(f"Delete failed: {e}")
-                                st.session_state.item_to_delete = None; st.rerun()
-                            if del_cols[1].button("❌ Cancel", key=f"cancel_del_{item['id']}"): st.session_state.item_to_delete = None; st.rerun()
+                                st.toast(f"Deleted '{st.session_state.item_to_delete['name']}'", icon="🗑️")
+                            except HttpError as e: st.error(f"Delete failed: {e}")
+                            st.session_state.item_to_delete = None; st.rerun()
+                        if del_cols[1].button("❌ Cancel", key=f"cancel_del_{item['id']}"): st.session_state.item_to_delete = None; st.rerun()
 
     elif st.session_state.page == "Cloud Copy":
         st.header("☁️➡️☁️ Cloud Copy"); 
@@ -530,7 +514,7 @@ def run_main_app(service, user_info):
                 if not show_raw:
                     for col in df.columns:
                         if col not in visible_columns: column_config[col] = None
-                st.data_editor(df, column_order=visible_columns, column_config=column_config, use_container_width=True, hide_index=True, key="cc_data_editor")
+                st.session_state.edited_df = st.data_editor(df, column_order=visible_columns, column_config=column_config, use_container_width=True, hide_index=True, key="cc_data_editor")
             st.markdown("---"); st.subheader("Copy Destination")
             try:
                 user_folders = get_user_folders(service)
@@ -544,7 +528,8 @@ def run_main_app(service, user_info):
                         get_user_folders.clear(); st.rerun()
                 new_folder_name = st.text_input("New Folder Name (Optional, creates a sub-folder)")
                 if st.button("🚀 Start Copy Process"):
-                    edited_data = pd.DataFrame(st.session_state.cc_data_editor)
+                    start_time = time.time()
+                    edited_data = st.session_state.edited_df
                     if not edited_data["Select"].any(): selected_files = edited_data
                     else: selected_files = edited_data[edited_data["Select"]]
                     if selected_files.empty: st.warning("No files found to copy.")
@@ -553,6 +538,7 @@ def run_main_app(service, user_info):
                         if new_folder_name:
                             with st.spinner(f"Creating folder '{new_folder_name}'..."): new_folder = service.files().create(body={'name': new_folder_name, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [dest_id]}, fields='id').execute(); dest_id = new_folder['id']
                         st.session_state.dest_id = dest_id; copied_files_list, skipped_files_list = [], []; progress_bar = st.progress(0, text="Starting copy process...")
+                        total_size_copied = 0
                         for i, row in enumerate(selected_files.itertuples(name="Pandas")):
                             progress_text = f"Processing ({i+1}/{len(selected_files)}): {row.Name}"; progress_bar.progress((i + 1) / len(selected_files), text=progress_text)
                             try: caps_dict = ast.literal_eval(row.capabilities) if isinstance(row.capabilities, str) else row.capabilities
@@ -561,9 +547,16 @@ def run_main_app(service, user_info):
                             file_meta = {'name': row.Name.replace('📁 ', '').replace('📄 ', ''), 'parents': [dest_id]}
                             try:
                                 copied_file = service.files().copy(fileId=row.id, body=file_meta, supportsAllDrives=True, fields='id, name, webViewLink, size, mimeType').execute()
-                                copied_files_list.append({'Name': copied_file['name'], 'Type': row.Type, 'Size (MB)': float(f"{int(copied_file.get('size', 0)) / (1024*1024):.2f}") if copied_file.get('size') else row._asdict().get('Size (MB)'),'Modified': row.Modified, 'Owner': storage['user_name'], 'Link': copied_file.get('webViewLink', '#'), 'Path': os.path.join(final_dest_name, copied_file['name'])})
+                                size_bytes = int(copied_file.get('size', 0))
+                                total_size_copied += size_bytes
+                                copied_files_list.append({'Name': copied_file['name'], 'Type': row.Type, 'Size (MB)': float(f"{size_bytes / (1024*1024):.2f}"),'Modified': row.Modified, 'Owner': storage['user_name'], 'Link': copied_file.get('webViewLink', '#'), 'Path': os.path.join(final_dest_name, copied_file['name'])})
                             except HttpError as e: skipped_files_list.append({'Name': row.Name, 'Reason': f"Error: {e.reason}"}); continue
-                        st.session_state.copied_files_df = pd.DataFrame(copied_files_list) if copied_files_list else pd.DataFrame(); st.session_state.skipped_files_df = pd.DataFrame(skipped_files_list) if skipped_files_list else pd.DataFrame(); st.toast("✅ Copy process completed!", icon="🎉")
+                        st.session_state.copied_files_df = pd.DataFrame(copied_files_list) if copied_files_list else pd.DataFrame(); st.session_state.skipped_files_df = pd.DataFrame(skipped_files_list) if skipped_files_list else pd.DataFrame()
+                        end_time = time.time()
+                        duration = end_time - start_time
+                        rate = (total_size_copied / duration) / (1024*1024) if duration > 0 else 0
+                        st.success(f"✅ Copy complete in {duration:.2f}s. Copied {format_storage(total_size_copied)} at {rate:.2f} MB/s.")
+
             except Exception as e:
                 st.error(f"Failed to fetch your folders: {e}")
                 st.info("This can happen if you have a very large number of folders in your root directory. Try refreshing the page.")
@@ -629,19 +622,20 @@ def run_main_app(service, user_info):
                 if not show_raw:
                     for col in df_items.columns:
                         if col not in visible_columns: column_config[col] = None
-                st.data_editor(df_items, column_order=visible_columns, column_config=column_config, use_container_width=True, height=400, key="cleaner_data_editor", hide_index=True)
+                st.session_state.edited_df = st.data_editor(df_items, column_order=visible_columns, column_config=column_config, use_container_width=True, height=400, key="cleaner_data_editor", hide_index=True)
             with st.form("submission_form"):
                 st.markdown("**3. Choose Destination (for copying shared content)**"); user_folders = get_user_folders(service); folder_names, folder_ids = ["My Drive (Root)"] + [f['name'] for f in user_folders], ["root"] + [f['id'] for f in user_folders]; dest_col1, dest_col2 = st.columns(2)
                 with dest_col1: dest_folder_id = st.selectbox("Select Destination Folder", options=folder_ids, format_func=lambda x: dict(zip(folder_ids, folder_names)).get(x, "N/A"), disabled=can_edit_directly)
                 with dest_col2: new_folder_name = st.text_input("New Folder Name (Optional)", disabled=can_edit_directly, help="If blank, the original folder name will be used.")
                 button_text = "🚀 Start Cleaning Process" if can_edit_directly else "🚀 Start Copying and Cleaning Process"; submitted = st.form_submit_button(button_text, type="primary")
                 if submitted:
-                    # FIX: Read from session_state to get user's selections
-                    edited_df = pd.DataFrame(st.session_state.cleaner_data_editor)
+                    edited_df = st.session_state.edited_df
                     if not edited_df.empty:
                         if not edited_df.Select.any(): actions_to_perform = edited_df
                         else: actions_to_perform = edited_df[edited_df.Select]
                         log_entries = []; final_dest_id = dest_folder_id; new_root_folder_name = ""
+                        start_time = time.time()
+                        total_size_copied = 0
                         with st.spinner("Processing files... Please wait."):
                             if not can_edit_directly:
                                 new_root_folder_name = new_folder_name if new_folder_name else root.get('name'); st.session_state.cleaner_dest_folder_name = new_root_folder_name; st.text(f"Creating new root folder: '{new_root_folder_name}'"); new_folder_meta = {'name': new_root_folder_name, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [dest_folder_id]}; new_folder = service.files().create(body=new_folder_meta, fields='id', supportsAllDrives=True).execute(); final_dest_id = new_folder.get('id')
@@ -662,14 +656,23 @@ def run_main_app(service, user_info):
                                         if not capabilities_dict.get('canCopy', False): log_entry['Status'] = 'Skipped (Copy restricted)'
                                         else:
                                             try:
-                                                file_meta = {'name': row.New_Name, 'parents': [final_dest_id]}; copied_file = service.files().copy(fileId=row.id, body=file_meta, supportsAllDrives=True, fields='id, name, webViewLink, size').execute(); dest_path = os.path.join(new_root_folder_name, os.path.basename(row.Path)) if row.Path else new_root_folder_name
-                                                log_entry.update({'Status': 'Copied to Drive', 'New Name': copied_file['name'], 'Path': dest_path, 'Size (MB)': float(f"{int(copied_file.get('size', 0)) / (1024*1024):.2f}") if copied_file.get('size') else 'N/A', 'Link': copied_file.get('webViewLink', '#'), 'Owner': storage['user_name']})
+                                                file_meta = {'name': row.New_Name, 'parents': [final_dest_id]}; copied_file = service.files().copy(fileId=row.id, body=file_meta, supportsAllDrives=True, fields='id, name, webViewLink, size').execute()
+                                                size_bytes = int(copied_file.get('size', 0))
+                                                total_size_copied += size_bytes
+                                                dest_path = os.path.join(new_root_folder_name, os.path.basename(row.Path)) if row.Path else new_root_folder_name
+                                                log_entry.update({'Status': 'Copied to Drive', 'New Name': copied_file['name'], 'Path': dest_path, 'Size (MB)': float(f"{size_bytes / (1024*1024):.2f}"), 'Link': copied_file.get('webViewLink', '#'), 'Owner': storage['user_name']})
                                             except HttpError as e: log_entry['Status'] = f'Error Copying: {e.reason}'
                                 log_entries.append(log_entry)
                         if log_entries: df_log = pd.DataFrame(log_entries); st.session_state.cleaner_success_log = df_log[df_log['Status'].isin(['Renamed', 'Deleted', 'Copied to Drive'])]; st.session_state.cleaner_skipped_log = df_log[~df_log['Status'].isin(['Renamed', 'Deleted', 'Copied to Drive'])]
                         else: st.session_state.cleaner_success_log = pd.DataFrame(); st.session_state.cleaner_skipped_log = pd.DataFrame()
+                        end_time = time.time()
+                        duration = end_time - start_time
+                        rate = (total_size_copied / duration) / (1024*1024) if duration > 0 else 0
+                        st.session_state.last_operation_summary = f"✅ Process complete in {duration:.2f}s. Copied {format_storage(total_size_copied)} at {rate:.2f} MB/s."
                         st.session_state.cleaner_state = 'finished'; st.rerun()
         if st.session_state.cleaner_state == 'finished':
+            if st.session_state.get('last_operation_summary'):
+                st.success(st.session_state.pop('last_operation_summary'))
             st.subheader("✅ Process Complete")
             if st.session_state.cleaner_dest_folder_name: st.info(f"Files were copied to a new folder named: **{st.session_state.cleaner_dest_folder_name}**")
             results_config = {"Link": st.column_config.LinkColumn("File Link", display_text="LINK"),"Size (MB)": st.column_config.NumberColumn(format="%.2f MB"),"Path": st.column_config.TextColumn("Destination Path"),"Name": st.column_config.TextColumn("File Name")}
