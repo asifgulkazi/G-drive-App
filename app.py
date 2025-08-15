@@ -1,4 +1,4 @@
-# Version: 13.3.1 - Security Authentication Fix
+# Version: 13.3.0 - Final Merged Version with All Fixes and Features authrization fix 
 import os
 import re
 import io
@@ -42,7 +42,7 @@ for key, default_value in SESSION_DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = default_value
 
-# --- AUTHENTICATION & AUTHORIZATION LOGIC ---
+# --- AUTHENTICATION & AUTHORIZATION LOGIC (FROM app.py) ---
 
 @st.cache_data(ttl=60)
 def get_authorized_users():
@@ -58,46 +58,36 @@ def get_authorized_users():
         st.error(f"FATAL: Could not read authorized users list. Error: {e}")
         return None
 
-def get_gdrive_service():
-    # This function now handles the entire auth flow and returns a service object or None
+def handle_user_login():
     if 'google_creds' in st.session_state and st.session_state.google_creds:
         try:
             creds_info = json.loads(st.session_state.google_creds)
             creds = Credentials.from_authorized_user_info(creds_info)
         except (json.JSONDecodeError, TypeError):
-            st.session_state.google_creds = None
-            return None
-        
+            st.session_state.google_creds = None; return None
         if creds.expired and creds.refresh_token:
             try:
                 creds.refresh(GoogleAuthRequest())
                 st.session_state.google_creds = creds.to_json()
             except Exception as e:
                 st.error(f"Session expired. Please log in again. Error: {e}")
-                st.session_state.google_creds = None
-                return None
-        
+                st.session_state.google_creds = None; return None
         if creds.valid:
             return build('drive', 'v3', credentials=creds)
-
     try:
         client_config = {"web": st.secrets["google_creds"]["web"]}
         scopes = ['https://www.googleapis.com/auth/drive']
         flow = Flow.from_client_config(client_config, scopes=scopes, redirect_uri=client_config["web"]["redirect_uris"][0])
     except KeyError:
-        st.error("FATAL: OAuth credentials (`google_creds`) are missing or malformed in secrets.")
-        return None
-
+        st.error("FATAL: OAuth credentials (`google_creds`) are missing or malformed in secrets."); return None
     auth_code = st.query_params.get('code')
     if auth_code:
         try:
             flow.fetch_token(code=auth_code)
             st.session_state.google_creds = flow.credentials.to_json()
-            st.query_params.clear()
-            st.rerun()
+            st.query_params.clear(); st.rerun()
         except Exception as e:
-            st.error(f"Authentication failed: {e}")
-            return None
+            st.error(f"Authentication failed: {e}"); return None
     else:
         auth_url, _ = flow.authorization_url(prompt='consent')
         st.title(f"Welcome to {APP_NAME}")
@@ -153,8 +143,8 @@ def show_access_denied_page(user_email):
             if key != 'page': del st.session_state[key]
         st.query_params.clear(); st.rerun()
 
+@st.cache_data(ttl=3600)
 def get_drive_storage_info(_service):
-    # This function should NOT be cached
     try:
         about = _service.about().get(fields='storageQuota,user').execute()
         storage = about.get('storageQuota', {}); user = about.get('user', {})
@@ -503,7 +493,7 @@ def run_main_app(service, user_info):
                                         except HttpError as e: st.error(f"Rename failed: {e}")
                                         st.session_state.item_to_rename = None; st.rerun()
                                     if form_cols[1].form_submit_button("❌", use_container_width=True): st.session_state.item_to_rename = None; st.rerun()
-                            else: prefix = "� " if not item.get('is_owned_by_me', True) else ""; st.write(f"{prefix}{get_file_icon(item)} {item['name']}")
+                            else: prefix = "🤝 " if not item.get('is_owned_by_me', True) else ""; st.write(f"{prefix}{get_file_icon(item)} {item['name']}")
                         row_cols[2].write("Folder" if is_folder else "File"); row_cols[3].write(f"{int(item.get('size', 0)) / (1024*1024):.2f} MB" if not is_folder and item.get('size') else ""); row_cols[4].write(pd.to_datetime(item['modifiedTime']).strftime('%y-%m-%d %H:%M')); row_cols[5].write(item.get('effective_owner_name', 'N/A'))
                         with row_cols[6]:
                             action_cols = st.columns(3)
