@@ -1,4 +1,4 @@
-# Version: 13.0.0 + 6.5.2 Features
+# Version: 13.1.1 - Final Merged Version with Bug Fixes
 import os
 import re
 import io
@@ -97,7 +97,6 @@ def handle_user_login():
 
 def send_authorization_request_email(user_email, developer_email, app_email, app_password):
     try:
-        # NEW: Use the Web App URL from secrets
         approval_script_url = st.secrets["approval_script"]["url"]
         approval_link = f"{approval_script_url}?email={user_email}"
         
@@ -531,7 +530,7 @@ def run_main_app(service, user_info):
                 if not show_raw:
                     for col in df.columns:
                         if col not in visible_columns: column_config[col] = None
-                st.session_state.edited_df = st.data_editor(df, column_order=visible_columns, column_config=column_config, use_container_width=True, hide_index=True, key="cc_data_editor")
+                st.data_editor(df, column_order=visible_columns, column_config=column_config, use_container_width=True, hide_index=True, key="cc_data_editor")
             st.markdown("---"); st.subheader("Copy Destination")
             try:
                 user_folders = get_user_folders(service)
@@ -545,9 +544,10 @@ def run_main_app(service, user_info):
                         get_user_folders.clear(); st.rerun()
                 new_folder_name = st.text_input("New Folder Name (Optional, creates a sub-folder)")
                 if st.button("🚀 Start Copy Process"):
-                    edited_data = st.session_state.edited_df
-                    if not edited_data.Select.any(): selected_files = edited_data
-                    else: selected_files = edited_data[edited_data.Select]
+                    # FIX: Use session_state for data_editor
+                    edited_data = pd.DataFrame(st.session_state.cc_data_editor)
+                    if not edited_data["Select"].any(): selected_files = edited_data
+                    else: selected_files = edited_data[edited_data["Select"]]
                     if selected_files.empty: st.warning("No files found to copy.")
                     else:
                         st.session_state.copied_files_df = None; st.session_state.skipped_files_df = None; dest_id = folder_ids[folder_names.index(selected_folder_name)]; final_dest_name = new_folder_name if new_folder_name else selected_folder_name
@@ -611,7 +611,7 @@ def run_main_app(service, user_info):
             with col2:
                 st.text_input("Text to ADD as a suffix to all names:", key="cleaner_tag_adder")
             st.markdown("**2. Select Files to Process**"); select_all = st.checkbox("Select/Deselect All", value=True, key="cleaner_select_all"); st.caption("Note: If no files are selected, ALL files will be processed."); st.caption("Click on a cell in the 'Action' column to change it.")
-            df_items = create_standard_dataframe(all_content, select_status=select_all); edited_df = pd.DataFrame()
+            df_items = create_standard_dataframe(all_content, select_status=select_all)
             if not df_items.empty:
                 df_items['New_Name'] = df_items['Name']
                 tag_to_remove = st.session_state.get("cleaner_tag_remover", "")
@@ -630,43 +630,46 @@ def run_main_app(service, user_info):
                 if not show_raw:
                     for col in df_items.columns:
                         if col not in visible_columns: column_config[col] = None
-                edited_df = st.data_editor(df_items, column_order=visible_columns, column_config=column_config, use_container_width=True, height=400, key="cleaner_data_editor", hide_index=True)
+                st.data_editor(df_items, column_order=visible_columns, column_config=column_config, use_container_width=True, height=400, key="cleaner_data_editor", hide_index=True)
             with st.form("submission_form"):
                 st.markdown("**3. Choose Destination (for copying shared content)**"); user_folders = get_user_folders(service); folder_names, folder_ids = ["My Drive (Root)"] + [f['name'] for f in user_folders], ["root"] + [f['id'] for f in user_folders]; dest_col1, dest_col2 = st.columns(2)
                 with dest_col1: dest_folder_id = st.selectbox("Select Destination Folder", options=folder_ids, format_func=lambda x: dict(zip(folder_ids, folder_names)).get(x, "N/A"), disabled=can_edit_directly)
                 with dest_col2: new_folder_name = st.text_input("New Folder Name (Optional)", disabled=can_edit_directly, help="If blank, the original folder name will be used.")
                 button_text = "🚀 Start Cleaning Process" if can_edit_directly else "🚀 Start Copying and Cleaning Process"; submitted = st.form_submit_button(button_text, type="primary")
-                if submitted and not edited_df.empty:
-                    if not edited_df.Select.any(): actions_to_perform = edited_df
-                    else: actions_to_perform = edited_df[edited_df['Select']]
-                    log_entries = []; final_dest_id = dest_folder_id; new_root_folder_name = ""
-                    with st.spinner("Processing files... Please wait."):
-                        if not can_edit_directly:
-                            new_root_folder_name = new_folder_name if new_folder_name else root.get('name'); st.session_state.cleaner_dest_folder_name = new_root_folder_name; st.text(f"Creating new root folder: '{new_root_folder_name}'"); new_folder_meta = {'name': new_root_folder_name, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [dest_folder_id]}; new_folder = service.files().create(body=new_folder_meta, fields='id', supportsAllDrives=True).execute(); final_dest_id = new_folder.get('id')
-                        progress_bar = st.progress(0)
-                        for i, row in enumerate(actions_to_perform.itertuples(name='Pandas')):
-                            progress_bar.progress((i + 1) / len(actions_to_perform), text=f"Processing: {row.Name}"); log_entry = {'Status': 'Skipped', 'Name': row.Name, 'New Name': row.New_Name, 'Path': row.Path, 'Size (MB)': row._asdict().get('Size (MB)'), 'Link': 'N/A', 'Owner': row.Owner, 'Modified': row.Modified, 'Type': row.Type}
-                            if can_edit_directly:
-                                if row.Action == 'Delete':
-                                    try: service.files().delete(fileId=row.id, supportsAllDrives=True).execute(); log_entry.update({'Status': 'Deleted', 'New Name': 'N/A', 'Size (MB)': 'N/A'})
-                                    except HttpError as e: log_entry.update({'Status': f'Error Deleting: {e.reason}'})
-                                elif row.Action == 'Rename' and row.Name != row.New_Name:
-                                    try: updated_file = service.files().update(fileId=row.id, body={'name': row.New_Name}, supportsAllDrives=True, fields='webViewLink, size').execute(); log_entry.update({'Status': 'Renamed', 'Link': updated_file.get('webViewLink'), 'Size (MB)': float(f"{int(updated_file.get('size', 0)) / (1024*1024):.2f}") if updated_file.get('size') else 'N/A', 'Path': row.Path})
-                                    except HttpError as e: log_entry.update({'Status': f'Error Renaming: {e.reason}'})
-                            else: # Copying logic
-                                if row.Action == 'Copy':
-                                    try: capabilities_dict = ast.literal_eval(row.capabilities) if isinstance(row.capabilities, str) else row.capabilities
-                                    except (ValueError, SyntaxError): capabilities_dict = {}
-                                    if not capabilities_dict.get('canCopy', False): log_entry['Status'] = 'Skipped (Copy restricted)'
-                                    else:
-                                        try:
-                                            file_meta = {'name': row.New_Name, 'parents': [final_dest_id]}; copied_file = service.files().copy(fileId=row.id, body=file_meta, supportsAllDrives=True, fields='id, name, webViewLink, size').execute(); dest_path = os.path.join(new_root_folder_name, os.path.basename(row.Path)) if row.Path else new_root_folder_name
-                                            log_entry.update({'Status': 'Copied to Drive', 'New Name': copied_file['name'], 'Path': dest_path, 'Size (MB)': float(f"{int(copied_file.get('size', 0)) / (1024*1024):.2f}") if copied_file.get('size') else 'N/A', 'Link': copied_file.get('webViewLink', '#'), 'Owner': storage['user_name']})
-                                        except HttpError as e: log_entry['Status'] = f'Error Copying: {e.reason}'
-                            log_entries.append(log_entry)
-                    if log_entries: df_log = pd.DataFrame(log_entries); st.session_state.cleaner_success_log = df_log[df_log['Status'].isin(['Renamed', 'Deleted', 'Copied to Drive'])]; st.session_state.cleaner_skipped_log = df_log[~df_log['Status'].isin(['Renamed', 'Deleted', 'Copied to Drive'])]
-                    else: st.session_state.cleaner_success_log = pd.DataFrame(); st.session_state.cleaner_skipped_log = pd.DataFrame()
-                    st.session_state.cleaner_state = 'finished'; st.rerun()
+                if submitted:
+                    # FIX: Read from session_state to get user's selections
+                    edited_df = pd.DataFrame(st.session_state.cleaner_data_editor)
+                    if not edited_df.empty:
+                        if not edited_df.Select.any(): actions_to_perform = edited_df
+                        else: actions_to_perform = edited_df[edited_df.Select]
+                        log_entries = []; final_dest_id = dest_folder_id; new_root_folder_name = ""
+                        with st.spinner("Processing files... Please wait."):
+                            if not can_edit_directly:
+                                new_root_folder_name = new_folder_name if new_folder_name else root.get('name'); st.session_state.cleaner_dest_folder_name = new_root_folder_name; st.text(f"Creating new root folder: '{new_root_folder_name}'"); new_folder_meta = {'name': new_root_folder_name, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [dest_folder_id]}; new_folder = service.files().create(body=new_folder_meta, fields='id', supportsAllDrives=True).execute(); final_dest_id = new_folder.get('id')
+                            progress_bar = st.progress(0)
+                            for i, row in enumerate(actions_to_perform.itertuples(name='Pandas')):
+                                progress_bar.progress((i + 1) / len(actions_to_perform), text=f"Processing: {row.Name}"); log_entry = {'Status': 'Skipped', 'Name': row.Name, 'New Name': row.New_Name, 'Path': row.Path, 'Size (MB)': row._asdict().get('Size (MB)'), 'Link': 'N/A', 'Owner': row.Owner, 'Modified': row.Modified, 'Type': row.Type}
+                                if can_edit_directly:
+                                    if row.Action == 'Delete':
+                                        try: service.files().delete(fileId=row.id, supportsAllDrives=True).execute(); log_entry.update({'Status': 'Deleted', 'New Name': 'N/A', 'Size (MB)': 'N/A'})
+                                        except HttpError as e: log_entry.update({'Status': f'Error Deleting: {e.reason}'})
+                                    elif row.Action == 'Rename' and row.Name != row.New_Name:
+                                        try: updated_file = service.files().update(fileId=row.id, body={'name': row.New_Name}, supportsAllDrives=True, fields='webViewLink, size').execute(); log_entry.update({'Status': 'Renamed', 'Link': updated_file.get('webViewLink'), 'Size (MB)': float(f"{int(updated_file.get('size', 0)) / (1024*1024):.2f}") if updated_file.get('size') else 'N/A', 'Path': row.Path})
+                                        except HttpError as e: log_entry.update({'Status': f'Error Renaming: {e.reason}'})
+                                else: # Copying logic
+                                    if row.Action == 'Copy':
+                                        try: capabilities_dict = ast.literal_eval(row.capabilities) if isinstance(row.capabilities, str) else row.capabilities
+                                        except (ValueError, SyntaxError): capabilities_dict = {}
+                                        if not capabilities_dict.get('canCopy', False): log_entry['Status'] = 'Skipped (Copy restricted)'
+                                        else:
+                                            try:
+                                                file_meta = {'name': row.New_Name, 'parents': [final_dest_id]}; copied_file = service.files().copy(fileId=row.id, body=file_meta, supportsAllDrives=True, fields='id, name, webViewLink, size').execute(); dest_path = os.path.join(new_root_folder_name, os.path.basename(row.Path)) if row.Path else new_root_folder_name
+                                                log_entry.update({'Status': 'Copied to Drive', 'New Name': copied_file['name'], 'Path': dest_path, 'Size (MB)': float(f"{int(copied_file.get('size', 0)) / (1024*1024):.2f}") if copied_file.get('size') else 'N/A', 'Link': copied_file.get('webViewLink', '#'), 'Owner': storage['user_name']})
+                                            except HttpError as e: log_entry['Status'] = f'Error Copying: {e.reason}'
+                                log_entries.append(log_entry)
+                        if log_entries: df_log = pd.DataFrame(log_entries); st.session_state.cleaner_success_log = df_log[df_log['Status'].isin(['Renamed', 'Deleted', 'Copied to Drive'])]; st.session_state.cleaner_skipped_log = df_log[~df_log['Status'].isin(['Renamed', 'Deleted', 'Copied to Drive'])]
+                        else: st.session_state.cleaner_success_log = pd.DataFrame(); st.session_state.cleaner_skipped_log = pd.DataFrame()
+                        st.session_state.cleaner_state = 'finished'; st.rerun()
         if st.session_state.cleaner_state == 'finished':
             st.subheader("✅ Process Complete")
             if st.session_state.cleaner_dest_folder_name: st.info(f"Files were copied to a new folder named: **{st.session_state.cleaner_dest_folder_name}**")
@@ -695,3 +698,15 @@ if service:
                 show_access_denied_page(user_info['user_email'])
     else:
         st.error("Could not retrieve user information from Google. Please try logging in again.")
+" and am asking a query about/based on this code below.
+Instructions to follow:
+  * Don't output/edit the document if the query is Direct/Simple. For example, if the query asks for a simple explanation, output a direct answer.
+  * Make sure to **edit** the document if the query shows the intent of editing the document, in which case output the entire edited document, **not just that section or the edits**.
+    * Don't output the same document/empty document and say that you have edited it.
+    * Don't change unrelated code in the document.
+  * Don't output  and  in your final response.
+  * Any references like "this" or "selected code" refers to the code between  and  tags.
+  * Just acknowledge my request in the introduction.
+  * Make sure to refer to the document as "Canvas" in your response.
+
+app at bulk file cleaner - despite of selected file is copying all files in destination folder where as the version 6.5.2 was doing it right all all full functions of 6.5.2 and don't skip any thing becuase this is correct code don't skip any code that is related to app and app.py authentication is working okay don't alter that and provide full code for app
