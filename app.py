@@ -1,4 +1,4 @@
-# Version: 13.2.0 - Final Merged Version with UX/UI Enhancements & Bug Fixes
+# Version: 13.2.1 - Final Merged Version with UX/UI Enhancements & Bug Fixes
 import os
 import re
 import io
@@ -341,27 +341,30 @@ def run_main_app(service, user_info):
                 for key in keys_to_del:
                     if key in st.session_state: del st.session_state[key]
                 st.query_params.clear(); st.rerun()
+        
+        st.markdown("<div style='height: 10vh;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align: center; padding-bottom: 20px;'>Prepared by AGK</div>", unsafe_allow_html=True)
+
 
     storage = user_info
     
     # Display header and storage meter on every page
     page_icons = {"Dashboard": "📊", "File Explorer": "🗂️", "Cloud Copy": "☁️➡️☁️", "Bulk File Cleaner": "🧹"}
     
-    st.header(f"{page_icons[st.session_state.page]} {st.session_state.page}")
-
+    header_cols = st.columns([3, 2])
+    with header_cols[0]:
+        st.header(f"{page_icons[st.session_state.page]} {st.session_state.page}")
+    
     if st.session_state.page != "Dashboard":
-        with st.container():
-            st.markdown("---")
-            c1, c2, c3, c4 = st.columns([2,1,1,1])
-            with c1:
-                st.progress(storage['usage_percent'] / 100, text=f"Storage: {storage['usage_percent']:.2f}% Used")
-            with c2:
-                st.metric("Used", f"{format_storage(storage['usage_gb'] * 1024**3)}")
-            with c3:
-                st.metric("Free", f"{format_storage((storage['limit_gb'] - storage['usage_gb'])*1024**3)}")
-            with c4:
-                st.metric("Total", f"{format_storage(storage['limit_gb'] * 1024**3)}")
-            st.markdown("---")
+        with header_cols[1]:
+            st.markdown(f"""
+            <div style="border: 1px solid #e6e6e6; border-radius: 10px; padding: 10px; text-align: right;">
+                <div style="font-size: 0.9em;"><b>Used:</b> {format_storage(storage['usage_gb'] * 1024**3)} | <b>Free:</b> {format_storage((storage['limit_gb'] - storage['usage_gb'])*1024**3)} | <b>Total:</b> {format_storage(storage['limit_gb'] * 1024**3)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            st.progress(storage['usage_percent'] / 100)
+
+    st.markdown("---")
     
     if st.session_state.get('last_operation_summary'):
         st.success(st.session_state.pop('last_operation_summary'))
