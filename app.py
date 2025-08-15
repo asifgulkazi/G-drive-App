@@ -732,4 +732,4 @@ if service:
                 show_access_denied_page(user_info['user_email'])
     else:
         st.error("Could not retrieve user information from Google. Please try logging in again.")
-�
+        
