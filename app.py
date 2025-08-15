@@ -305,6 +305,22 @@ def create_standard_dataframe(items_list, select_status=False):
         processed_content.append({**item, 'Select': select_status, 'Name': item.get('name', 'N/A'), 'Type': 'Folder' if item.get('mimeType') == 'application/vnd.google-apps.folder' else 'File', 'Size (MB)': size_mb, 'Modified': mod_time, 'Owner': owner_name, 'Link': item.get('webViewLink', '#'), 'Path': item.get('Path', item.get('name'))})
     return pd.DataFrame(processed_content)
 
+def create_explorer_dataframe(items_list):
+    processed_content = []
+    for item in items_list:
+        is_folder = item['is_folder_sort'] == 1
+        mod_time = pd.to_datetime(item.get('modifiedTime')).strftime('%Y-%m-%d %H:%M') if item.get('modifiedTime') else 'N/A'
+        size_mb = float(f"{int(item.get('size', 0)) / (1024*1024):.2f}") if not is_folder and 'size' in item and item['size'] is not None else 0.0
+        processed_content.append({
+            'Name': item.get('name', 'N/A'),
+            'Type': 'Folder' if is_folder else 'File',
+            'Size (MB)': size_mb,
+            'Modified': mod_time,
+            'Owner': item.get('effective_owner_name', 'N/A'),
+            'Link': item.get('webViewLink', '#')
+        })
+    return pd.DataFrame(processed_content)
+
 def reset_cleaner_state():
     st.session_state.cleaner_state = 'initial'; st.session_state.cleaner_link = ""; st.session_state.cleaner_root_details = None; st.session_state.cleaner_all_items = []; st.session_state.cleaner_success_log = None; st.session_state.cleaner_skipped_log = None; st.session_state.cleaner_dest_folder_name = None
 
@@ -363,12 +379,14 @@ def run_main_app(service, user_info):
             """, unsafe_allow_html=True)
             st.progress(storage['usage_percent'] / 100)
 
+    # Note: The global operation summary display has been removed from here
+    # and moved into each respective page's logic.
+
     st.markdown("---")
     
-    if st.session_state.get('last_operation_summary'):
-        st.success(st.session_state.pop('last_operation_summary'))
-
     if st.session_state.page == "Dashboard":
+        if st.session_state.get('last_operation_summary'): # Still show for dashboard if any summary leaks
+            st.success(st.session_state.pop('last_operation_summary'))
         st.markdown(f"Welcome, **{storage['user_name']}**! Here's a quick snapshot of your Google Drive.")
         with st.container(border=True):
             st.subheader("📦 Storage Overview")
@@ -432,37 +450,71 @@ def run_main_app(service, user_info):
             else: st.warning("Could not retrieve drive snapshot.")
 
     elif st.session_state.page == "File Explorer":
+        if st.session_state.get('last_operation_summary'):
+            st.success(st.session_state.pop('last_operation_summary'))
+
         st.info("Directly browse, rename, and delete files and folders in your Google Drive.")
         if not st.session_state.initial_fetch_done:
             st.markdown("<br>", unsafe_allow_html=True)
             c1, c2, c3 = st.columns([1,2,1])
             if c2.button("🚀 Explore My Drive", use_container_width=True, type="primary"):
                 st.session_state.initial_fetch_done = True
+                st.session_state.just_refreshed_explorer = True
                 st.rerun()
         else:
-            toolbar_cols = st.columns([4, 1])
+            start_time = time.time()
+            # Toolbar logic is split to allow data fetching before button rendering
+            toolbar_cols = st.columns([3, 2])
             with toolbar_cols[0]:
                 nav_items = []
                 if len(st.session_state.folder_path) > 1: nav_items.append({'type': 'back', 'name': '⬅️ Back'})
                 for i, folder in enumerate(st.session_state.folder_path): nav_items.append({'type': 'breadcrumb', 'name': folder['name'], 'id': folder['id'], 'index': i})
-                nav_cols = st.columns(len(nav_items))
+                
+                # Dynamically adjust column widths for breadcrumbs
+                nav_col_widths = [1 if item['type'] == 'back' else len(item['name']) for item in nav_items]
+                nav_cols = st.columns(nav_col_widths)
+
                 for i, item in enumerate(nav_items):
                     with nav_cols[i]:
                         if item['type'] == 'back':
                             if st.button(item['name'], key='nav_back', use_container_width=True):
                                 st.session_state.folder_path.pop()
                                 st.session_state.update(current_folder_id=st.session_state.folder_path[-1]['id'], item_to_rename=None, item_to_delete=None)
+                                st.session_state.just_refreshed_explorer = True
                                 st.rerun()
                         elif item['type'] == 'breadcrumb':
                             if st.button(item['name'], key=f"path_{item['id']}", use_container_width=True, help=item['name']):
                                 st.session_state.update(current_folder_id=item['id'], folder_path=st.session_state.folder_path[:item['index']+1], item_to_rename=None, item_to_delete=None)
+                                st.session_state.just_refreshed_explorer = True
                                 st.rerun()
-            with toolbar_cols[1]:
-                if st.button("🔄 Refresh View", use_container_width=True):
-                    get_and_sort_folder_items.clear()
-                    st.rerun()
+            
             current_folder_id = st.session_state.current_folder_id
             items_to_display = get_and_sort_folder_items(service, current_folder_id, storage['user_email'])
+            end_time = time.time()
+
+            if st.session_state.pop('just_refreshed_explorer', False):
+                st.session_state.last_operation_summary = f"✅ View loaded in {end_time - start_time:.2f}s."
+                st.rerun()
+
+            with toolbar_cols[1]:
+                btn_cols = st.columns(2)
+                with btn_cols[0]:
+                    if st.button("🔄 Refresh View", use_container_width=True):
+                        get_and_sort_folder_items.clear()
+                        st.session_state.just_refreshed_explorer = True
+                        st.rerun()
+                with btn_cols[1]:
+                    if items_to_display:
+                        df_explorer = create_explorer_dataframe(items_to_display)
+                        excel_data, _ = generate_excel_report({'File List': df_explorer}, "file_list.xlsx")
+                        st.download_button(
+                            label="📥 Download as Excel",
+                            data=excel_data,
+                            file_name=f"{st.session_state.folder_path[-1]['name']}_files.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+
             st.markdown("---")
             st.markdown("""<style>.sticky-header{position:sticky;top:50px;background-color:white;z-index:10;display:flex;flex-direction:row;align-items:center;padding:10px 5px;border-bottom:1px solid #e6e6e6;}.header-col{font-weight:bold;text-align:left;padding:0 4px;color:#262730;}.back-to-top{position:fixed;bottom:20px;right:25px;font-size:25px;background-color:rgba(0,0,0,0.4);color:white;width:50px;height:50px;text-align:center;border-radius:50%;cursor:pointer;opacity:0.7;transition:opacity .3s;text-decoration:none;line-height:50px;z-index:1000;}.back-to-top:hover{opacity:1;}</style>""", unsafe_allow_html=True)
             st.markdown('<a href="#top" class="back-to-top">⬆️</a>', unsafe_allow_html=True)
@@ -478,6 +530,7 @@ def run_main_app(service, user_info):
                             if row_cols[0].button("➡️", key=f"open_{item['id']}", help="Open folder"):
                                 get_and_sort_folder_items.clear()
                                 st.session_state.update(current_folder_id=nav_id, folder_path=st.session_state.folder_path + [{'name': item['name'], 'id': nav_id}], item_to_rename=None, item_to_delete=None)
+                                st.session_state.just_refreshed_explorer = True
                                 st.rerun()
                         elif item.get('webViewLink'): row_cols[0].link_button("🔗", item['webViewLink'], help="Open file in new tab")
                         with row_cols[1]:
@@ -489,6 +542,7 @@ def run_main_app(service, user_info):
                                             service.files().update(fileId=item['id'], body={'name': new_name}, supportsAllDrives=True).execute()
                                             get_and_sort_folder_items.clear()
                                             st.toast(f"Renamed to '{new_name}'", icon="✏️")
+                                            st.session_state.just_refreshed_explorer = True
                                         except HttpError as e: st.error(f"Rename failed: {e}")
                                         st.session_state.item_to_rename = None; st.rerun()
                                     if form_cols[1].form_submit_button("❌", use_container_width=True): st.session_state.item_to_rename = None; st.rerun()
@@ -506,11 +560,15 @@ def run_main_app(service, user_info):
                                     service.files().delete(fileId=st.session_state.item_to_delete['id'], supportsAllDrives=True).execute()
                                     get_and_sort_folder_items.clear()
                                     st.toast(f"Deleted '{st.session_state.item_to_delete['name']}'", icon="🗑️")
+                                    st.session_state.just_refreshed_explorer = True
                                 except HttpError as e: st.error(f"Delete failed: {e}")
                                 st.session_state.item_to_delete = None; st.rerun()
                             if del_cols[1].button("❌ Cancel", key=f"cancel_del_{item['id']}"): st.session_state.item_to_delete = None; st.rerun()
 
     elif st.session_state.page == "Cloud Copy":
+        if st.session_state.get('last_operation_summary'):
+            st.success(st.session_state.pop('last_operation_summary'))
+        
         st.info("Use this tool to copy files or entire folders from a shared link directly into your own Google Drive.")
         st.caption("1. Paste a Google Drive link. | 2. Select the files you want to copy. | 3. Choose a destination in your drive.")
         def fetch_source_details(service, link):
@@ -599,6 +657,9 @@ def run_main_app(service, user_info):
             report_dfs = {'Copied_Files': st.session_state.copied_files_df, 'Skipped_Files': st.session_state.skipped_files_df}; excel_data, _ = generate_excel_report(report_dfs, "copy_report.xlsx"); st.download_button("📥 Download Full Report as Excel", excel_data, "copy_report.xlsx")
 
     elif st.session_state.page == "Bulk File Cleaner":
+        if st.session_state.get('last_operation_summary'):
+            st.success(st.session_state.pop('last_operation_summary'))
+            
         st.info("A powerful tool to clean up folders with lots of unwanted files or promotional text in filenames.")
         st.markdown("""
         **How to use it:**
@@ -702,8 +763,7 @@ def run_main_app(service, user_info):
                         st.session_state.last_operation_summary = f"✅ Process complete in {duration:.2f}s. Copied {format_storage(total_size_copied)} at {rate:.2f} MB/s."
                         st.session_state.cleaner_state = 'finished'; st.rerun()
         if st.session_state.cleaner_state == 'finished':
-            if st.session_state.get('last_operation_summary'):
-                st.success(st.session_state.pop('last_operation_summary'))
+            # This summary is now handled by the logic at the top of the page block
             st.subheader("✅ Process Complete")
             if st.session_state.cleaner_dest_folder_name: st.info(f"Files were copied to a new folder named: **{st.session_state.cleaner_dest_folder_name}**")
             results_config = {"Link": st.column_config.LinkColumn("File Link", display_text="LINK"),"Size (MB)": st.column_config.NumberColumn(format="%.2f MB"),"Path": st.column_config.TextColumn("Destination Path"),"Name": st.column_config.TextColumn("File Name")}
