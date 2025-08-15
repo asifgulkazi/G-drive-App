@@ -544,7 +544,6 @@ def run_main_app(service, user_info):
                         get_user_folders.clear(); st.rerun()
                 new_folder_name = st.text_input("New Folder Name (Optional, creates a sub-folder)")
                 if st.button("🚀 Start Copy Process"):
-                    # FIX: Use session_state for data_editor
                     edited_data = pd.DataFrame(st.session_state.cc_data_editor)
                     if not edited_data["Select"].any(): selected_files = edited_data
                     else: selected_files = edited_data[edited_data["Select"]]
@@ -698,15 +697,3 @@ if service:
                 show_access_denied_page(user_info['user_email'])
     else:
         st.error("Could not retrieve user information from Google. Please try logging in again.")
-" and am asking a query about/based on this code below.
-Instructions to follow:
-  * Don't output/edit the document if the query is Direct/Simple. For example, if the query asks for a simple explanation, output a direct answer.
-  * Make sure to **edit** the document if the query shows the intent of editing the document, in which case output the entire edited document, **not just that section or the edits**.
-    * Don't output the same document/empty document and say that you have edited it.
-    * Don't change unrelated code in the document.
-  * Don't output  and  in your final response.
-  * Any references like "this" or "selected code" refers to the code between  and  tags.
-  * Just acknowledge my request in the introduction.
-  * Make sure to refer to the document as "Canvas" in your response.
-
-app at bulk file cleaner - despite of selected file is copying all files in destination folder where as the version 6.5.2 was doing it right all all full functions of 6.5.2 and don't skip any thing becuase this is correct code don't skip any code that is related to app and app.py authentication is working okay don't alter that and provide full code for app
