@@ -1,4 +1,4 @@
-# Version: 13.2.2 - Final Merged Version with UX/UI Enhancements & Bug Fixes
+# Version: 13.3.0 - Final Merged Version with All Fixes and Features
 import os
 import re
 import io
@@ -499,7 +499,7 @@ def run_main_app(service, user_info):
                             action_cols = st.columns(3)
                             if action_cols[0].button("✏️", key=f"rename_btn_{item['id']}", help="Rename"): st.session_state.item_to_rename = item['id']; st.rerun()
                             if action_cols[1].button("🗑️", key=f"delete_btn_{item['id']}", help="Delete"): st.session_state.item_to_delete = item; st.rerun()
-                            if action_cols[2].button("�", key=f"copy_btn_{item['id']}", help="Copy to my Drive"): st.session_state.update(link_to_copy=item.get('webViewLink'), auto_fetch_on_load=True, page="Cloud Copy"); st.rerun()
+                            if action_cols[2].button("📋", key=f"copy_btn_{item['id']}", help="Copy to my Drive"): st.session_state.update(link_to_copy=item.get('webViewLink'), auto_fetch_on_load=True, page="Cloud Copy"); st.rerun()
                         if st.session_state.item_to_delete and st.session_state.item_to_delete['id'] == item['id']:
                             st.warning(f"Are you sure you want to delete **{st.session_state.item_to_delete['name']}**?"); del_cols = st.columns([1,1,4])
                             if del_cols[0].button("✅ Yes, Delete", key=f"confirm_del_{item['id']}"):
@@ -732,4 +732,3 @@ if service:
                 show_access_denied_page(user_info['user_email'])
     else:
         st.error("Could not retrieve user information from Google. Please try logging in again.")
-        
