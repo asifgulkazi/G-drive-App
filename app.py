@@ -1,4 +1,4 @@
-# Version: 13.3.0 - Final Merged Version with All Fixes and Features authrization fix 
+# Version: 13.3.1 - Security Authentication Fix
 import os
 import re
 import io
@@ -42,7 +42,7 @@ for key, default_value in SESSION_DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = default_value
 
-# --- AUTHENTICATION & AUTHORIZATION LOGIC (FROM app.py) ---
+# --- AUTHENTICATION & AUTHORIZATION LOGIC ---
 
 @st.cache_data(ttl=60)
 def get_authorized_users():
@@ -58,7 +58,7 @@ def get_authorized_users():
         st.error(f"FATAL: Could not read authorized users list. Error: {e}")
         return None
 
-def handle_user_login():
+def get_gdrive_service():
     if 'google_creds' in st.session_state and st.session_state.google_creds:
         try:
             creds_info = json.loads(st.session_state.google_creds)
@@ -143,7 +143,6 @@ def show_access_denied_page(user_email):
             if key != 'page': del st.session_state[key]
         st.query_params.clear(); st.rerun()
 
-@st.cache_data(ttl=3600)
 def get_drive_storage_info(_service):
     try:
         about = _service.about().get(fields='storageQuota,user').execute()
