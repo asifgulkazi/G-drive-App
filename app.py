@@ -1,4 +1,4 @@
-# Version: 13.2.1 - Final Merged Version with UX/UI Enhancements & Bug Fixes
+# Version: 13.2.2 - Final Merged Version with UX/UI Enhancements & Bug Fixes
 import os
 import re
 import io
