@@ -23,7 +23,7 @@ from google.oauth2.service_account import Credentials as ServiceAccountCredentia
 st.set_page_config(page_title="Cloud Drive Manager", page_icon="☁️", layout="wide")
 
 AUTHORIZED_USERS_SHEET_URL = "https://docs.google.com/spreadsheets/d/1Z_SANZWikklPWXntLojdMgwXJs45FDFPKxr4gRBNqco/edit?gid=0#gid=0"
-APP_NAME = "Cloud Drive Manager"
+APP_NAME = "Google Drive Manager"
 
 SESSION_DEFAULTS = {
     'google_creds': None, 'page': "Dashboard", 'user_info': None,
@@ -314,6 +314,7 @@ def reset_cleaner_state():
 def run_main_app(service, user_info):
     with st.sidebar:
         st.title(f"☁️ {APP_NAME}")
+        st.caption("Your All-in-One G-Drive Hub")
         st.write("---")
         st.subheader("Authenticated Account")
         st.write(f"**Name:** {user_info['user_name']}")
@@ -343,25 +344,41 @@ def run_main_app(service, user_info):
 
     storage = user_info
     
-    # Display storage meter on every page
-    with st.container():
-        st.markdown("---")
-        c1, c2, c3, c4 = st.columns([2,1,1,1])
-        with c1:
-            st.progress(storage['usage_percent'] / 100, text=f"Storage: {storage['usage_percent']:.2f}% Used")
-        with c2:
-            st.metric("Used", f"{format_storage(storage['usage_gb'] * 1024**3)}")
-        with c3:
-            st.metric("Free", f"{format_storage((storage['limit_gb'] - storage['usage_gb'])*1024**3)}")
-        with c4:
-            st.metric("Total", f"{format_storage(storage['limit_gb'] * 1024**3)}")
-        st.markdown("---")
+    # Display header and storage meter on every page
+    page_icons = {"Dashboard": "📊", "File Explorer": "🗂️", "Cloud Copy": "☁️➡️☁️", "Bulk File Cleaner": "🧹"}
+    
+    st.header(f"{page_icons[st.session_state.page]} {st.session_state.page}")
 
+    if st.session_state.page != "Dashboard":
+        with st.container():
+            st.markdown("---")
+            c1, c2, c3, c4 = st.columns([2,1,1,1])
+            with c1:
+                st.progress(storage['usage_percent'] / 100, text=f"Storage: {storage['usage_percent']:.2f}% Used")
+            with c2:
+                st.metric("Used", f"{format_storage(storage['usage_gb'] * 1024**3)}")
+            with c3:
+                st.metric("Free", f"{format_storage((storage['limit_gb'] - storage['usage_gb'])*1024**3)}")
+            with c4:
+                st.metric("Total", f"{format_storage(storage['limit_gb'] * 1024**3)}")
+            st.markdown("---")
+    
+    if st.session_state.get('last_operation_summary'):
+        st.success(st.session_state.pop('last_operation_summary'))
 
     if st.session_state.page == "Dashboard":
-        st.header(f"📊 Dashboard")
         st.markdown(f"Welcome, **{storage['user_name']}**! Here's a quick snapshot of your Google Drive.")
-        
+        with st.container(border=True):
+            st.subheader("📦 Storage Overview")
+            if 'usage_percent' in storage:
+                st.progress(storage['usage_percent'] / 100, text=f"{storage['usage_percent']:.2f}% Used")
+                c1, c2, c3 = st.columns(3); 
+                c1.metric("Used Storage", f"{format_storage(storage['usage_gb'] * 1024**3)}")
+                c2.metric("Free Space", f"{format_storage((storage['limit_gb'] - storage['usage_gb'])*1024**3)}")
+                c3.metric("Total Storage", f"{format_storage(storage['limit_gb'] * 1024**3)}")
+            else:
+                st.info("Storage information is not available for this account type.")
+        st.markdown("---")
         if not st.session_state.stats_loaded:
             with st.container(border=True):
                 st.subheader("🚀 Analyze Drive Content")
@@ -375,8 +392,6 @@ def run_main_app(service, user_info):
                     st.session_state.stats_loaded = True
                     st.rerun()
         else:
-            if st.session_state.get('last_operation_summary'):
-                st.success(st.session_state.pop('last_operation_summary'))
             col1, col2 = st.columns([4, 1])
             with col1: st.subheader("📊 Drive Content Snapshot")
             with col2:
@@ -415,9 +430,7 @@ def run_main_app(service, user_info):
             else: st.warning("Could not retrieve drive snapshot.")
 
     elif st.session_state.page == "File Explorer":
-        st.header("🗂️ My Drive Explorer")
         st.info("Directly browse, rename, and delete files and folders in your Google Drive.")
-        
         if not st.session_state.initial_fetch_done:
             st.markdown("<br>", unsafe_allow_html=True)
             c1, c2, c3 = st.columns([1,2,1])
@@ -446,14 +459,11 @@ def run_main_app(service, user_info):
                 if st.button("🔄 Refresh View", use_container_width=True):
                     get_and_sort_folder_items.clear()
                     st.rerun()
-
             current_folder_id = st.session_state.current_folder_id
             items_to_display = get_and_sort_folder_items(service, current_folder_id, storage['user_email'])
-            
             st.markdown("---")
             st.markdown("""<style>.sticky-header{position:sticky;top:50px;background-color:white;z-index:10;display:flex;flex-direction:row;align-items:center;padding:10px 5px;border-bottom:1px solid #e6e6e6;}.header-col{font-weight:bold;text-align:left;padding:0 4px;color:#262730;}.back-to-top{position:fixed;bottom:20px;right:25px;font-size:25px;background-color:rgba(0,0,0,0.4);color:white;width:50px;height:50px;text-align:center;border-radius:50%;cursor:pointer;opacity:0.7;transition:opacity .3s;text-decoration:none;line-height:50px;z-index:1000;}.back-to-top:hover{opacity:1;}</style>""", unsafe_allow_html=True)
             st.markdown('<a href="#top" class="back-to-top">⬆️</a>', unsafe_allow_html=True)
-            
             if items_to_display is not None:
                 if not items_to_display: st.info("This folder is empty.")
                 else:
@@ -499,7 +509,6 @@ def run_main_app(service, user_info):
                             if del_cols[1].button("❌ Cancel", key=f"cancel_del_{item['id']}"): st.session_state.item_to_delete = None; st.rerun()
 
     elif st.session_state.page == "Cloud Copy":
-        st.header("☁️➡️☁️ Cloud Copy"); 
         st.info("Use this tool to copy files or entire folders from a shared link directly into your own Google Drive.")
         st.caption("1. Paste a Google Drive link. | 2. Select the files you want to copy. | 3. Choose a destination in your drive.")
         def fetch_source_details(service, link):
@@ -575,7 +584,8 @@ def run_main_app(service, user_info):
                         end_time = time.time()
                         duration = end_time - start_time
                         rate = (total_size_copied / duration) / (1024*1024) if duration > 0 else 0
-                        st.success(f"✅ Copy complete in {duration:.2f}s. Copied {format_storage(total_size_copied)} at {rate:.2f} MB/s.")
+                        st.session_state.last_operation_summary = f"✅ Copy complete in {duration:.2f}s. Copied {format_storage(total_size_copied)} at {rate:.2f} MB/s."
+                        st.rerun()
 
             except Exception as e:
                 st.error(f"Failed to fetch your folders: {e}")
@@ -587,7 +597,6 @@ def run_main_app(service, user_info):
             report_dfs = {'Copied_Files': st.session_state.copied_files_df, 'Skipped_Files': st.session_state.skipped_files_df}; excel_data, _ = generate_excel_report(report_dfs, "copy_report.xlsx"); st.download_button("📥 Download Full Report as Excel", excel_data, "copy_report.xlsx")
 
     elif st.session_state.page == "Bulk File Cleaner":
-        st.header("🧹 Bulk File Cleaner"); 
         st.info("A powerful tool to clean up folders with lots of unwanted files or promotional text in filenames.")
         st.markdown("""
         **How to use it:**
@@ -651,8 +660,8 @@ def run_main_app(service, user_info):
                 if submitted:
                     edited_df = st.session_state.edited_df
                     if not edited_df.empty:
-                        if not edited_df.Select.any(): actions_to_perform = edited_df
-                        else: actions_to_perform = edited_df[edited_df.Select]
+                        if not edited_df["Select"].any(): actions_to_perform = edited_df
+                        else: actions_to_perform = edited_df[edited_df["Select"]]
                         log_entries = []; final_dest_id = dest_folder_id; new_root_folder_name = ""
                         start_time = time.time()
                         total_size_copied = 0
@@ -720,3 +729,20 @@ if service:
                 show_access_denied_page(user_info['user_email'])
     else:
         st.error("Could not retrieve user information from Google. Please try logging in again.")
+" and am asking a query about/based on this code below.
+Instructions to follow:
+  * Don't output/edit the document if the query is Direct/Simple. For example, if the query asks for a simple explanation, output a direct answer.
+  * Make sure to **edit** the document if the query shows the intent of editing the document, in which case output the entire edited document, **not just that section or the edits**.
+    * Don't output the same document/empty document and say that you have edited it.
+    * Don't change unrelated code in the document.
+  * Don't output  and  in your final response.
+  * Any references like "this" or "selected code" refers to the code between  and  tags.
+  * Just acknowledge my request in the introduction.
+  * Make sure to refer to the document as "Canvas" in your response.
+
+the code is not working and giving error 
+Traceback:
+File "/mount/src/g-drive-app/app.py", line 701
+  " and am asking a query about/based on this code below.
+  ^
+SyntaxError: unterminated string literal (detected at line 7
