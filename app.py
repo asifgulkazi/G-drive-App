@@ -1,4 +1,4 @@
-# Version: 13.3.1 - Security Authentication Fix
+# Version: 13.4.0 - Dashboard Redesign & Performance Boost
 import os
 import re
 import io
@@ -10,7 +10,8 @@ import ast
 import gspread
 import smtplib
 import ssl
-from collections import Counter
+import altair as alt
+from collections import Counter, defaultdict
 from email.message import EmailMessage
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google_auth_oauthlib.flow import Flow
@@ -27,7 +28,7 @@ APP_NAME = "Google Drive Manager"
 
 SESSION_DEFAULTS = {
     'google_creds': None, 'page': "Dashboard", 'user_info': None,
-    'authorization_request_sent': False, 'stats_loaded': False,
+    'authorization_request_sent': False, 'snapshot_loaded': False,
     'fetched_file_details': None, 'folder_contents_df': None,
     'edited_df': pd.DataFrame(), 'copied_files_df': None, 'skipped_files_df': None,
     'dest_id': None, 'current_folder_id': 'root',
@@ -179,30 +180,63 @@ def get_file_icon(item):
     return icon_map.get(mime_type, '📄')
 
 @st.cache_data(ttl=600)
-def get_fast_drive_statistics_data(_service):
-    stats = {'largest_files': [], 'file_type_counts': {}, 'recent_files': []}
-    errors = []
+def get_drive_snapshot_data(_service, user_email):
     try:
-        largest_files_results = _service.files().list(q="trashed=false and mimeType != 'application/vnd.google-apps.folder'", orderBy='quotaBytesUsed desc', pageSize=10, fields="files(id, name, webViewLink, quotaBytesUsed)").execute()
-        stats['largest_files'] = largest_files_results.get('files', [])
-    except HttpError as e: errors.append(f"Could not fetch largest files: {e}")
-    file_type_queries = {"Documents (Docs, Word)": "mimeType='application/vnd.google-apps.document' or mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'", "Spreadsheets (Sheets, Excel)": "mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'", "PDFs": "mimeType='application/pdf'", "Images": "mimeType contains 'image/'", "Videos": "mimeType contains 'video/'"}
-    file_type_counts = {}
-    for friendly_name, query in file_type_queries.items():
-        try:
-            count = 0; page_token = None
-            while True:
-                response = _service.files().list(q=f"trashed=false and ({query})", pageSize=1000, fields="nextPageToken, files(id)", pageToken=page_token).execute()
-                count += len(response.get('files', [])); page_token = response.get('nextPageToken', None)
-                if page_token is None: break
-            if count > 0: file_type_counts[friendly_name] = count
-        except HttpError as e: errors.append(f"Could not get count for '{friendly_name}': API Error. Skipping."); continue
-    stats['file_type_counts'] = file_type_counts
-    try:
-        recent_files_results = _service.files().list(q="trashed=false", orderBy='modifiedTime desc', pageSize=10, fields="files(id, name, mimeType, webViewLink, modifiedTime)").execute()
-        stats['recent_files'] = recent_files_results.get('files', [])
-    except HttpError as e: errors.append(f"Could not fetch recent files: {e}")
-    return stats, errors
+        results = _service.files().list(
+            q="trashed=false and mimeType != 'application/vnd.google-apps.folder'",
+            pageSize=1000,
+            orderBy='modifiedTime desc',
+            fields="files(id, name, mimeType, quotaBytesUsed, modifiedTime, owners, webViewLink)"
+        ).execute()
+        files = results.get('files', [])
+
+        if not files:
+            return None, "No files found to analyze."
+
+        # Process files for stats
+        storage_by_type = defaultdict(int)
+        ownership_counts = Counter()
+        
+        def get_category(mime_type):
+            if 'google-apps.document' in mime_type or 'wordprocessingml' in mime_type: return 'Documents'
+            if 'google-apps.spreadsheet' in mime_type or 'spreadsheetml' in mime_type: return 'Spreadsheets'
+            if 'google-apps.presentation' in mime_type or 'presentationml' in mime_type: return 'Presentations'
+            if 'pdf' in mime_type: return 'PDFs'
+            if mime_type.startswith('image/'): return 'Images'
+            if mime_type.startswith('video/'): return 'Videos'
+            if 'zip' in mime_type or 'archive' in mime_type: return 'Archives'
+            return 'Other'
+
+        for f in files:
+            size = int(f.get('quotaBytesUsed', 0))
+            category = get_category(f.get('mimeType', ''))
+            storage_by_type[category] += size
+            
+            owner_email = f.get('owners', [{}])[0].get('emailAddress', '')
+            if owner_email == user_email:
+                ownership_counts['Owned by Me'] += 1
+            else:
+                ownership_counts['Shared with Me'] += 1
+
+        # Sort by size for largest files and by time for oldest
+        files.sort(key=lambda x: int(x.get('quotaBytesUsed', 0)), reverse=True)
+        largest_files = files[:10]
+
+        files.sort(key=lambda x: x.get('modifiedTime'))
+        oldest_files = files[:10]
+
+        stats = {
+            'storage_by_type': dict(storage_by_type),
+            'ownership_counts': dict(ownership_counts),
+            'largest_files': largest_files,
+            'oldest_files': oldest_files,
+            'total_files_analyzed': len(files)
+        }
+        return stats, None
+    except HttpError as e:
+        return None, f"Could not fetch drive snapshot: {e}"
+    except Exception as e:
+        return None, f"An unexpected error occurred: {e}"
 
 def get_file_details(_service, file_id):
     try: return _service.files().get(fileId=file_id, fields='id, name, mimeType, size, webViewLink, modifiedTime, owners, shortcutDetails, capabilities', supportsAllDrives=True).execute()
@@ -379,75 +413,134 @@ def run_main_app(service, user_info):
             """, unsafe_allow_html=True)
             st.progress(storage['usage_percent'] / 100)
 
-    # Note: The global operation summary display has been removed from here
-    # and moved into each respective page's logic.
-
     st.markdown("---")
     
     if st.session_state.page == "Dashboard":
-        if st.session_state.get('last_operation_summary'): # Still show for dashboard if any summary leaks
-            st.success(st.session_state.pop('last_operation_summary'))
         st.markdown(f"Welcome, **{storage['user_name']}**! Here's a quick snapshot of your Google Drive.")
         with st.container(border=True):
             st.subheader("📦 Storage Overview")
             if 'usage_percent' in storage:
                 st.progress(storage['usage_percent'] / 100, text=f"{storage['usage_percent']:.2f}% Used")
-                c1, c2, c3 = st.columns(3); 
+                c1, c2, c3 = st.columns(3)
                 c1.metric("Used Storage", f"{format_storage(storage['usage_gb'] * 1024**3)}")
                 c2.metric("Free Space", f"{format_storage((storage['limit_gb'] - storage['usage_gb'])*1024**3)}")
                 c3.metric("Total Storage", f"{format_storage(storage['limit_gb'] * 1024**3)}")
             else:
                 st.info("Storage information is not available for this account type.")
+        
         st.markdown("---")
-        if not st.session_state.stats_loaded:
-            with st.container(border=True):
-                st.subheader("🚀 Analyze Drive Content")
-                st.info("Click the button below for a quick analysis of your drive's content, including largest files, file type counts, and recent activity.")
-                if st.button("📊 Analyze My Drive"): 
-                    start_time = time.time()
-                    with st.spinner("Fetching drive snapshot..."):
-                        st.session_state.drive_stats, st.session_state.drive_stats_errors = get_fast_drive_statistics_data(service)
-                    end_time = time.time()
-                    st.session_state.last_operation_summary = f"✅ Snapshot loaded in {end_time - start_time:.2f}s."
-                    st.session_state.stats_loaded = True
-                    st.rerun()
+
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.subheader("🚀 Drive Activity Snapshot")
+            st.caption("This analysis is based on your 1,000 most recently modified files for a fast and relevant overview.")
+        with col2:
+            if st.button("🔄 Refresh Snapshot", help="Recalculate the drive snapshot."):
+                get_drive_snapshot_data.clear()
+                st.session_state.snapshot_loaded = False
+                st.rerun()
+
+        if not st.session_state.snapshot_loaded:
+            with st.spinner("Analyzing your recent drive activity..."):
+                start_time = time.time()
+                st.session_state.snapshot_stats, st.session_state.snapshot_error = get_drive_snapshot_data(service, user_info['user_email'])
+                end_time = time.time()
+                st.session_state.last_operation_summary = f"✅ Snapshot loaded in {end_time - start_time:.2f}s."
+                st.session_state.snapshot_loaded = True
+                st.rerun()
+        
+        if st.session_state.get('last_operation_summary'):
+            st.success(st.session_state.pop('last_operation_summary'))
+
+        stats = st.session_state.snapshot_stats
+        error = st.session_state.snapshot_error
+
+        if error:
+            st.error(error)
+        elif not stats:
+            st.info("No recent file activity found to generate a snapshot.")
         else:
-            col1, col2 = st.columns([4, 1])
-            with col1: st.subheader("📊 Drive Content Snapshot")
-            with col2:
-                if st.button("🔄 Refresh", help="Clear cache and re-calculate stats."):
-                    get_fast_drive_statistics_data.clear()
-                    st.session_state.stats_loaded = False
-                    st.rerun()
-            
-            drive_stats = st.session_state.drive_stats
-            errors = st.session_state.drive_stats_errors
-            if errors:
-                for error in errors: st.warning(error)
-            if drive_stats:
-                col1, col2 = st.columns(2)
-                with col1:
+            tab1, tab2, tab3 = st.tabs(["📊 Storage Breakdown", "🐘 File Insights", "🤝 Ownership"])
+
+            with tab1:
+                st.markdown("#### Storage by File Type (Recent Files)")
+                storage_data = stats.get('storage_by_type', {})
+                if not storage_data:
+                    st.info("No files with size information found in the recent activity sample.")
+                else:
+                    source = pd.DataFrame({
+                        'Category': storage_data.keys(),
+                        'Size (MB)': [size / (1024*1024) for size in storage_data.values()]
+                    }).sort_values('Size (MB)', ascending=False)
+                    
+                    chart = alt.Chart(source).mark_arc(innerRadius=50).encode(
+                        theta=alt.Theta(field="Size (MB)", type="quantitative"),
+                        color=alt.Color(field="Category", type="nominal", title="File Category"),
+                        tooltip=['Category', 'Size (MB)']
+                    ).properties(width=500, height=300)
+
+                    c1, c2 = st.columns([2, 1])
+                    with c1:
+                        st.altair_chart(chart, use_container_width=True)
+                    with c2:
+                        st.dataframe(source,
+                                     column_config={"Size (MB)": st.column_config.NumberColumn(format="%.2f MB")},
+                                     hide_index=True, use_container_width=True)
+
+            with tab2:
+                c1, c2 = st.columns(2)
+                with c1:
                     with st.container(border=True):
-                        st.markdown("#### 📁 File Types Breakdown")
-                        if drive_stats['file_type_counts']:
-                            df_types = pd.DataFrame(list(drive_stats['file_type_counts'].items()), columns=['File Type', 'Count'])
-                            st.dataframe(df_types, hide_index=True, use_container_width=True)
-                        else: st.info("No common file types found.")
-                    with st.container(border=True, height=450):
-                        st.markdown("#### 🕒 Recent Activity")
-                        if drive_stats['recent_files']:
-                            recent_files_data = [{"Name": item.get('name', 'N/A'), "Type": "Folder" if item.get('mimeType') == 'application/vnd.google-apps.folder' else "File", "Last Modified": pd.to_datetime(item.get('modifiedTime')).strftime('%Y-%m-%d %H:%M'), "Link": item.get('webViewLink', '#')} for item in drive_stats['recent_files']]
-                            st.dataframe(pd.DataFrame(recent_files_data), column_config={"Link": st.column_config.LinkColumn("Open")}, hide_index=True, use_container_width=True)
-                        else: st.info("No recent files found.")
-                with col2:
-                    with st.container(border=True, height=800):
-                        st.markdown("#### 🐘 Top 10 Largest Files")
-                        st.caption("Useful for finding what's taking up the most space.")
-                        if drive_stats['largest_files']:
-                            largest_files_data = [{"Name": item.get('name', 'N/A'), "Size": format_storage(item.get('quotaBytesUsed')), "Link": item.get('webViewLink', '#')} for item in drive_stats['largest_files']]
-                            st.dataframe(pd.DataFrame(largest_files_data), column_config={"Link": st.column_config.LinkColumn("Open")}, hide_index=True, use_container_width=True)
-                        else: st.info("No large files found.")
-            else: st.warning("Could not retrieve drive snapshot.")
+                        st.markdown("#### 🐘 Largest Files (Recent Sample)")
+                        largest_files = stats.get('largest_files', [])
+                        if largest_files:
+                            df_large = pd.DataFrame([{
+                                "Name": f.get('name', 'N/A'),
+                                "Size": format_storage(f.get('quotaBytesUsed')),
+                                "Link": f.get('webViewLink', '#')
+                            } for f in largest_files])
+                            st.dataframe(df_large, column_config={"Link": st.column_config.LinkColumn("Open")}, hide_index=True, use_container_width=True)
+                        else:
+                            st.info("No files to display.")
+                with c2:
+                    with st.container(border=True):
+                        st.markdown("#### ⏳ Oldest Modified Files (Recent Sample)")
+                        oldest_files = stats.get('oldest_files', [])
+                        if oldest_files:
+                            df_old = pd.DataFrame([{
+                                "Name": f.get('name', 'N/A'),
+                                "Modified": pd.to_datetime(f.get('modifiedTime')).strftime('%Y-%m-%d'),
+                                "Link": f.get('webViewLink', '#')
+                            } for f in oldest_files])
+                            st.dataframe(df_old, column_config={"Link": st.column_config.LinkColumn("Open")}, hide_index=True, use_container_width=True)
+                        else:
+                            st.info("No files to display.")
+            
+            with tab3:
+                st.markdown("#### File Ownership (Recent Files)")
+                ownership_data = stats.get('ownership_counts', {})
+                if not ownership_data:
+                    st.info("Could not determine ownership for recent files.")
+                else:
+                    source = pd.DataFrame({
+                        'Category': ownership_data.keys(),
+                        'Count': ownership_data.values()
+                    })
+
+                    chart = alt.Chart(source).mark_arc(innerRadius=50).encode(
+                        theta=alt.Theta(field="Count", type="quantitative"),
+                        color=alt.Color(field="Category", type="nominal", title="Ownership"),
+                        tooltip=['Category', 'Count']
+                    ).properties(width=500, height=300)
+                    
+                    c1, c2 = st.columns([2, 1])
+                    with c1:
+                        st.altair_chart(chart, use_container_width=True)
+                    with c2:
+                        st.metric("Total Files Analyzed", stats.get('total_files_analyzed', 0))
+                        for category, count in ownership_data.items():
+                            st.metric(category, count)
+
 
     elif st.session_state.page == "File Explorer":
         if st.session_state.get('last_operation_summary'):
@@ -463,14 +556,12 @@ def run_main_app(service, user_info):
                 st.rerun()
         else:
             start_time = time.time()
-            # Toolbar logic is split to allow data fetching before button rendering
             toolbar_cols = st.columns([3, 2])
             with toolbar_cols[0]:
                 nav_items = []
                 if len(st.session_state.folder_path) > 1: nav_items.append({'type': 'back', 'name': '⬅️ Back'})
                 for i, folder in enumerate(st.session_state.folder_path): nav_items.append({'type': 'breadcrumb', 'name': folder['name'], 'id': folder['id'], 'index': i})
                 
-                # Dynamically adjust column widths for breadcrumbs
                 nav_col_widths = [1 if item['type'] == 'back' else len(item['name']) for item in nav_items]
                 nav_cols = st.columns(nav_col_widths)
 
@@ -763,7 +854,6 @@ def run_main_app(service, user_info):
                         st.session_state.last_operation_summary = f"✅ Process complete in {duration:.2f}s. Copied {format_storage(total_size_copied)} at {rate:.2f} MB/s."
                         st.session_state.cleaner_state = 'finished'; st.rerun()
         if st.session_state.cleaner_state == 'finished':
-            # This summary is now handled by the logic at the top of the page block
             st.subheader("✅ Process Complete")
             if st.session_state.cleaner_dest_folder_name: st.info(f"Files were copied to a new folder named: **{st.session_state.cleaner_dest_folder_name}**")
             results_config = {"Link": st.column_config.LinkColumn("File Link", display_text="LINK"),"Size (MB)": st.column_config.NumberColumn(format="%.2f MB"),"Path": st.column_config.TextColumn("Destination Path"),"Name": st.column_config.TextColumn("File Name")}
