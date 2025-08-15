@@ -1,4 +1,4 @@
-# Version: 13.1.2 - Final Merged Version with Bug Fixes & Features
+# Version: 13.2.0 - Final Merged Version with UX/UI Enhancements & Bug Fixes
 import os
 import re
 import io
@@ -36,7 +36,7 @@ SESSION_DEFAULTS = {
     'initial_fetch_done': False, 'cleaner_link': "", 'cleaner_state': 'initial',
     'cleaner_root_details': None, 'cleaner_all_items': [],
     'cleaner_success_log': None, 'cleaner_skipped_log': None,
-    'cleaner_dest_folder_name': None
+    'cleaner_dest_folder_name': None, 'last_operation_summary': None
 }
 for key, default_value in SESSION_DEFAULTS.items():
     if key not in st.session_state:
@@ -143,6 +143,7 @@ def show_access_denied_page(user_email):
             if key != 'page': del st.session_state[key]
         st.query_params.clear(); st.rerun()
 
+@st.cache_data(ttl=3600)
 def get_drive_storage_info(_service):
     try:
         about = _service.about().get(fields='storageQuota,user').execute()
@@ -151,7 +152,7 @@ def get_drive_storage_info(_service):
         return {'user_name': user.get('displayName', 'N/A'), 'user_email': user.get('emailAddress', 'N/A'), 'limit_gb': limit / (1024**3), 'usage_gb': usage / (1024**3), 'usage_percent': (usage / limit * 100) if limit > 0 else 0}
     except Exception: return None
 
-# --- HELPER & FEATURE FUNCTIONS (FROM 6.5.2) ---
+# --- HELPER & FEATURE FUNCTIONS ---
 def extract_file_id_from_link(link):
     if not link: return None
     patterns = [r'/file/d/([a-zA-Z0-9_-]+)', r'/drive/folders/([a-zA-Z0-9_-]+)', r'id=([a-zA-Z0-9_-]+)', r'/d/([a-zA-Z0-9_-]+)/']
@@ -308,7 +309,7 @@ def create_standard_dataframe(items_list, select_status=False):
 def reset_cleaner_state():
     st.session_state.cleaner_state = 'initial'; st.session_state.cleaner_link = ""; st.session_state.cleaner_root_details = None; st.session_state.cleaner_all_items = []; st.session_state.cleaner_success_log = None; st.session_state.cleaner_skipped_log = None; st.session_state.cleaner_dest_folder_name = None
 
-# --- MAIN APPLICATION UI (FROM 6.5.2) ---
+# --- MAIN APPLICATION UI ---
 
 def run_main_app(service, user_info):
     with st.sidebar:
@@ -324,8 +325,7 @@ def run_main_app(service, user_info):
         selected_page = st.radio("Choose a page", PAGES, index=current_page_index, key="page_selector")
         if selected_page != st.session_state.page:
             st.session_state.page = selected_page
-            if st.session_state.page != "Bulk File Cleaner": reset_cleaner_state()
-            st.session_state.stats_loaded = False; st.rerun()
+            st.rerun()
         st.info("Manage your Google Drive from one place.")
         st.write("---")
         
@@ -343,37 +343,50 @@ def run_main_app(service, user_info):
 
     storage = user_info
     
+    # Display storage meter on every page
+    with st.container():
+        st.markdown("---")
+        c1, c2, c3, c4 = st.columns([2,1,1,1])
+        with c1:
+            st.progress(storage['usage_percent'] / 100, text=f"Storage: {storage['usage_percent']:.2f}% Used")
+        with c2:
+            st.metric("Used", f"{format_storage(storage['usage_gb'] * 1024**3)}")
+        with c3:
+            st.metric("Free", f"{format_storage((storage['limit_gb'] - storage['usage_gb'])*1024**3)}")
+        with c4:
+            st.metric("Total", f"{format_storage(storage['limit_gb'] * 1024**3)}")
+        st.markdown("---")
+
+
     if st.session_state.page == "Dashboard":
         st.header(f"📊 Dashboard")
         st.markdown(f"Welcome, **{storage['user_name']}**! Here's a quick snapshot of your Google Drive.")
-        st.markdown("---")
-        with st.container(border=True):
-            st.subheader("📦 Storage Overview")
-            if 'usage_percent' in storage:
-                st.progress(storage['usage_percent'] / 100, text=f"{storage['usage_percent']:.2f}% Used")
-                c1, c2, c3 = st.columns(3); 
-                c1.metric("Used Storage", f"{format_storage(storage['usage_gb'] * 1024**3)}")
-                c2.metric("Free Space", f"{format_storage((storage['limit_gb'] - storage['usage_gb'])*1024**3)}")
-                c3.metric("Total Storage", f"{format_storage(storage['limit_gb'] * 1024**3)}")
-            else:
-                st.info("Storage information is not available for this account type.")
-        st.markdown("---")
-        if not st.session_state.get('stats_loaded', False):
+        
+        if not st.session_state.stats_loaded:
             with st.container(border=True):
-                st.subheader("🚀 Get Content Snapshot")
-                st.info("Click the button below to get a quick analysis of your drive's content, including largest files, file type counts, and recent activity.")
+                st.subheader("🚀 Analyze Drive Content")
+                st.info("Click the button below for a quick analysis of your drive's content, including largest files, file type counts, and recent activity.")
                 if st.button("📊 Analyze My Drive"): 
+                    start_time = time.time()
+                    with st.spinner("Fetching drive snapshot..."):
+                        st.session_state.drive_stats, st.session_state.drive_stats_errors = get_fast_drive_statistics_data(service)
+                    end_time = time.time()
+                    st.session_state.last_operation_summary = f"✅ Snapshot loaded in {end_time - start_time:.2f}s."
                     st.session_state.stats_loaded = True
                     st.rerun()
         else:
+            if st.session_state.get('last_operation_summary'):
+                st.success(st.session_state.pop('last_operation_summary'))
             col1, col2 = st.columns([4, 1])
             with col1: st.subheader("📊 Drive Content Snapshot")
             with col2:
                 if st.button("🔄 Refresh", help="Clear cache and re-calculate stats."):
                     get_fast_drive_statistics_data.clear()
+                    st.session_state.stats_loaded = False
                     st.rerun()
-            with st.spinner("Fetching your drive snapshot..."):
-                drive_stats, errors = get_fast_drive_statistics_data(service)
+            
+            drive_stats = st.session_state.drive_stats
+            errors = st.session_state.drive_stats_errors
             if errors:
                 for error in errors: st.warning(error)
             if drive_stats:
@@ -405,78 +418,85 @@ def run_main_app(service, user_info):
         st.header("🗂️ My Drive Explorer")
         st.info("Directly browse, rename, and delete files and folders in your Google Drive.")
         
-        toolbar_cols = st.columns([4, 1])
-        with toolbar_cols[0]:
-            nav_items = []
-            if len(st.session_state.folder_path) > 1: nav_items.append({'type': 'back', 'name': '⬅️ Back'})
-            for i, folder in enumerate(st.session_state.folder_path): nav_items.append({'type': 'breadcrumb', 'name': folder['name'], 'id': folder['id'], 'index': i})
-            nav_cols = st.columns(len(nav_items))
-            for i, item in enumerate(nav_items):
-                with nav_cols[i]:
-                    if item['type'] == 'back':
-                        if st.button(item['name'], key='nav_back', use_container_width=True):
-                            st.session_state.folder_path.pop()
-                            st.session_state.update(current_folder_id=st.session_state.folder_path[-1]['id'], item_to_rename=None, item_to_delete=None)
-                            st.rerun()
-                    elif item['type'] == 'breadcrumb':
-                        if st.button(item['name'], key=f"path_{item['id']}", use_container_width=True, help=item['name']):
-                            st.session_state.update(current_folder_id=item['id'], folder_path=st.session_state.folder_path[:item['index']+1], item_to_rename=None, item_to_delete=None)
-                            st.rerun()
-        with toolbar_cols[1]:
-            if st.button("🔄 Refresh View", use_container_width=True):
-                get_and_sort_folder_items.clear()
+        if not st.session_state.initial_fetch_done:
+            st.markdown("<br>", unsafe_allow_html=True)
+            c1, c2, c3 = st.columns([1,2,1])
+            if c2.button("🚀 Explore My Drive", use_container_width=True, type="primary"):
+                st.session_state.initial_fetch_done = True
                 st.rerun()
+        else:
+            toolbar_cols = st.columns([4, 1])
+            with toolbar_cols[0]:
+                nav_items = []
+                if len(st.session_state.folder_path) > 1: nav_items.append({'type': 'back', 'name': '⬅️ Back'})
+                for i, folder in enumerate(st.session_state.folder_path): nav_items.append({'type': 'breadcrumb', 'name': folder['name'], 'id': folder['id'], 'index': i})
+                nav_cols = st.columns(len(nav_items))
+                for i, item in enumerate(nav_items):
+                    with nav_cols[i]:
+                        if item['type'] == 'back':
+                            if st.button(item['name'], key='nav_back', use_container_width=True):
+                                st.session_state.folder_path.pop()
+                                st.session_state.update(current_folder_id=st.session_state.folder_path[-1]['id'], item_to_rename=None, item_to_delete=None)
+                                st.rerun()
+                        elif item['type'] == 'breadcrumb':
+                            if st.button(item['name'], key=f"path_{item['id']}", use_container_width=True, help=item['name']):
+                                st.session_state.update(current_folder_id=item['id'], folder_path=st.session_state.folder_path[:item['index']+1], item_to_rename=None, item_to_delete=None)
+                                st.rerun()
+            with toolbar_cols[1]:
+                if st.button("🔄 Refresh View", use_container_width=True):
+                    get_and_sort_folder_items.clear()
+                    st.rerun()
 
-        current_folder_id = st.session_state.current_folder_id
-        items_to_display = get_and_sort_folder_items(service, current_folder_id, storage['user_email'])
-        
-        st.markdown("---")
-        st.markdown("""<style>.sticky-header{position:sticky;top:50px;background-color:white;z-index:10;display:flex;flex-direction:row;align-items:center;padding:10px 5px;border-bottom:1px solid #e6e6e6;}.header-col{font-weight:bold;text-align:left;padding:0 4px;color:#262730;}.back-to-top{position:fixed;bottom:20px;right:25px;font-size:25px;background-color:rgba(0,0,0,0.4);color:white;width:50px;height:50px;text-align:center;border-radius:50%;cursor:pointer;opacity:0.7;transition:opacity .3s;text-decoration:none;line-height:50px;z-index:1000;}.back-to-top:hover{opacity:1;}</style>""", unsafe_allow_html=True)
-        st.markdown('<a href="#top" class="back-to-top">⬆️</a>', unsafe_allow_html=True)
-        
-        if items_to_display is not None:
-            if not items_to_display: st.info("This folder is empty.")
-            else:
-                col_widths, headers = [0.8, 4, 1, 1, 1.5, 1.5, 2], ["", "Name", "Type", "Size", "Modified", "Owner", "Actions"]
-                header_html = ''.join([f'<div class="header-col" style="flex-grow:{w};flex-basis:0;">{h}</div>' for h, w in zip(headers, col_widths)])
-                st.markdown(f'<div class="sticky-header">{header_html}</div>', unsafe_allow_html=True)
-                for item in items_to_display:
-                    row_cols = st.columns(col_widths); is_folder = item['is_folder_sort'] == 1; nav_id = item.get('shortcutDetails', {}).get('targetId') or item['id']
-                    if is_folder:
-                        if row_cols[0].button("➡️", key=f"open_{item['id']}", help="Open folder"):
-                            get_and_sort_folder_items.clear()
-                            st.session_state.update(current_folder_id=nav_id, folder_path=st.session_state.folder_path + [{'name': item['name'], 'id': nav_id}], item_to_rename=None, item_to_delete=None)
-                            st.rerun()
-                    elif item.get('webViewLink'): row_cols[0].link_button("🔗", item['webViewLink'], help="Open file in new tab")
-                    with row_cols[1]:
-                        if st.session_state.item_to_rename == item['id']:
-                            with st.form(key=f"rename_form_{item['id']}"):
-                                new_name = st.text_input("New Name", value=item['name'], label_visibility="collapsed"); form_cols = st.columns(2)
-                                if form_cols[0].form_submit_button("💾", use_container_width=True):
-                                    try:
-                                        service.files().update(fileId=item['id'], body={'name': new_name}, supportsAllDrives=True).execute()
-                                        get_and_sort_folder_items.clear()
-                                        st.toast(f"Renamed to '{new_name}'", icon="✏️")
-                                    except HttpError as e: st.error(f"Rename failed: {e}")
-                                    st.session_state.item_to_rename = None; st.rerun()
-                                if form_cols[1].form_submit_button("❌", use_container_width=True): st.session_state.item_to_rename = None; st.rerun()
-                        else: prefix = "🤝 " if not item.get('is_owned_by_me', True) else ""; st.write(f"{prefix}{get_file_icon(item)} {item['name']}")
-                    row_cols[2].write("Folder" if is_folder else "File"); row_cols[3].write(f"{int(item.get('size', 0)) / (1024*1024):.2f} MB" if not is_folder and item.get('size') else ""); row_cols[4].write(pd.to_datetime(item['modifiedTime']).strftime('%y-%m-%d %H:%M')); row_cols[5].write(item.get('effective_owner_name', 'N/A'))
-                    with row_cols[6]:
-                        action_cols = st.columns(3)
-                        if action_cols[0].button("✏️", key=f"rename_btn_{item['id']}", help="Rename"): st.session_state.item_to_rename = item['id']; st.rerun()
-                        if action_cols[1].button("🗑️", key=f"delete_btn_{item['id']}", help="Delete"): st.session_state.item_to_delete = item; st.rerun()
-                        if action_cols[2].button("📋", key=f"copy_btn_{item['id']}", help="Copy to my Drive"): st.session_state.update(link_to_copy=item.get('webViewLink'), auto_fetch_on_load=True, page="Cloud Copy"); st.rerun()
-                    if st.session_state.item_to_delete and st.session_state.item_to_delete['id'] == item['id']:
-                        st.warning(f"Are you sure you want to delete **{st.session_state.item_to_delete['name']}**?"); del_cols = st.columns([1,1,4])
-                        if del_cols[0].button("✅ Yes, Delete", key=f"confirm_del_{item['id']}"):
-                            try:
-                                service.files().delete(fileId=st.session_state.item_to_delete['id'], supportsAllDrives=True).execute()
+            current_folder_id = st.session_state.current_folder_id
+            items_to_display = get_and_sort_folder_items(service, current_folder_id, storage['user_email'])
+            
+            st.markdown("---")
+            st.markdown("""<style>.sticky-header{position:sticky;top:50px;background-color:white;z-index:10;display:flex;flex-direction:row;align-items:center;padding:10px 5px;border-bottom:1px solid #e6e6e6;}.header-col{font-weight:bold;text-align:left;padding:0 4px;color:#262730;}.back-to-top{position:fixed;bottom:20px;right:25px;font-size:25px;background-color:rgba(0,0,0,0.4);color:white;width:50px;height:50px;text-align:center;border-radius:50%;cursor:pointer;opacity:0.7;transition:opacity .3s;text-decoration:none;line-height:50px;z-index:1000;}.back-to-top:hover{opacity:1;}</style>""", unsafe_allow_html=True)
+            st.markdown('<a href="#top" class="back-to-top">⬆️</a>', unsafe_allow_html=True)
+            
+            if items_to_display is not None:
+                if not items_to_display: st.info("This folder is empty.")
+                else:
+                    col_widths, headers = [0.8, 4, 1, 1, 1.5, 1.5, 2], ["", "Name", "Type", "Size", "Modified", "Owner", "Actions"]
+                    header_html = ''.join([f'<div class="header-col" style="flex-grow:{w};flex-basis:0;">{h}</div>' for h, w in zip(headers, col_widths)])
+                    st.markdown(f'<div class="sticky-header">{header_html}</div>', unsafe_allow_html=True)
+                    for item in items_to_display:
+                        row_cols = st.columns(col_widths); is_folder = item['is_folder_sort'] == 1; nav_id = item.get('shortcutDetails', {}).get('targetId') or item['id']
+                        if is_folder:
+                            if row_cols[0].button("➡️", key=f"open_{item['id']}", help="Open folder"):
                                 get_and_sort_folder_items.clear()
-                                st.toast(f"Deleted '{st.session_state.item_to_delete['name']}'", icon="🗑️")
-                            except HttpError as e: st.error(f"Delete failed: {e}")
-                            st.session_state.item_to_delete = None; st.rerun()
-                        if del_cols[1].button("❌ Cancel", key=f"cancel_del_{item['id']}"): st.session_state.item_to_delete = None; st.rerun()
+                                st.session_state.update(current_folder_id=nav_id, folder_path=st.session_state.folder_path + [{'name': item['name'], 'id': nav_id}], item_to_rename=None, item_to_delete=None)
+                                st.rerun()
+                        elif item.get('webViewLink'): row_cols[0].link_button("🔗", item['webViewLink'], help="Open file in new tab")
+                        with row_cols[1]:
+                            if st.session_state.item_to_rename == item['id']:
+                                with st.form(key=f"rename_form_{item['id']}"):
+                                    new_name = st.text_input("New Name", value=item['name'], label_visibility="collapsed"); form_cols = st.columns(2)
+                                    if form_cols[0].form_submit_button("💾", use_container_width=True):
+                                        try:
+                                            service.files().update(fileId=item['id'], body={'name': new_name}, supportsAllDrives=True).execute()
+                                            get_and_sort_folder_items.clear()
+                                            st.toast(f"Renamed to '{new_name}'", icon="✏️")
+                                        except HttpError as e: st.error(f"Rename failed: {e}")
+                                        st.session_state.item_to_rename = None; st.rerun()
+                                    if form_cols[1].form_submit_button("❌", use_container_width=True): st.session_state.item_to_rename = None; st.rerun()
+                            else: prefix = "🤝 " if not item.get('is_owned_by_me', True) else ""; st.write(f"{prefix}{get_file_icon(item)} {item['name']}")
+                        row_cols[2].write("Folder" if is_folder else "File"); row_cols[3].write(f"{int(item.get('size', 0)) / (1024*1024):.2f} MB" if not is_folder and item.get('size') else ""); row_cols[4].write(pd.to_datetime(item['modifiedTime']).strftime('%y-%m-%d %H:%M')); row_cols[5].write(item.get('effective_owner_name', 'N/A'))
+                        with row_cols[6]:
+                            action_cols = st.columns(3)
+                            if action_cols[0].button("✏️", key=f"rename_btn_{item['id']}", help="Rename"): st.session_state.item_to_rename = item['id']; st.rerun()
+                            if action_cols[1].button("🗑️", key=f"delete_btn_{item['id']}", help="Delete"): st.session_state.item_to_delete = item; st.rerun()
+                            if action_cols[2].button("📋", key=f"copy_btn_{item['id']}", help="Copy to my Drive"): st.session_state.update(link_to_copy=item.get('webViewLink'), auto_fetch_on_load=True, page="Cloud Copy"); st.rerun()
+                        if st.session_state.item_to_delete and st.session_state.item_to_delete['id'] == item['id']:
+                            st.warning(f"Are you sure you want to delete **{st.session_state.item_to_delete['name']}**?"); del_cols = st.columns([1,1,4])
+                            if del_cols[0].button("✅ Yes, Delete", key=f"confirm_del_{item['id']}"):
+                                try:
+                                    service.files().delete(fileId=st.session_state.item_to_delete['id'], supportsAllDrives=True).execute()
+                                    get_and_sort_folder_items.clear()
+                                    st.toast(f"Deleted '{st.session_state.item_to_delete['name']}'", icon="🗑️")
+                                except HttpError as e: st.error(f"Delete failed: {e}")
+                                st.session_state.item_to_delete = None; st.rerun()
+                            if del_cols[1].button("❌ Cancel", key=f"cancel_del_{item['id']}"): st.session_state.item_to_delete = None; st.rerun()
 
     elif st.session_state.page == "Cloud Copy":
         st.header("☁️➡️☁️ Cloud Copy"); 
